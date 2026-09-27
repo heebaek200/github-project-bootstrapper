@@ -44,8 +44,14 @@ gh auth setup-git
 2. `팀프로젝트-시작.vbs`를 더블클릭합니다. 터미널 창 없이 GUI가 열립니다.
 3. **사전 점검**을 눌러 Git, GitHub CLI, 활성 로그인 계정, Project 접근 권한과 템플릿 파일을 확인합니다.
 4. **1. 저장소 만들기**에서 저장소 물리명과 논리명을 입력하고 저장소를 생성합니다.
+
+   ![저장소 만들기 화면](docs/images/Screenshot_1.png)
+
 5. 생성된 GitHub 저장소의 Wiki에서 `Home` 페이지를 한 번 수동 생성합니다.
 6. **2. Wiki · Project 구성**에서 대상 저장소명, Project 논리명과 선택적인 조원 계정을 입력해 팀 환경을 구성합니다.
+
+   ![Wiki 및 Project 구성 화면](docs/images/Screenshot_2.png)
+
 7. 필요한 경우 **Project 설정**을 눌러 `Default repository`를 생성한 저장소로 수동 지정합니다.
 
 ## 1단계: 저장소 만들기
