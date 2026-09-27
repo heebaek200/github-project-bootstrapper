@@ -291,4 +291,5 @@ $RECYCLE.BIN/
 /state.json
 
 # 실행 명령, GitHub 계정명, 로컬 경로 등이 기록됩니다.
-/logs/
+/logs/*
+!/logs/.gitkeep
