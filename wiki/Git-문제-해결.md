@@ -18,7 +18,14 @@ git commit -m "작업 중간 저장 #12"
 git push -u origin f/12
 ```
 
-다른 컴퓨터에서 원격 저장소의 브랜치 정보를 가져옵니다.
+다른 컴퓨터에 아직 로컬 저장소가 없다면 원격 저장소를 먼저 Clone하고 저장소 폴더로 이동합니다. `OWNER`와 `REPOSITORY`는 실제 GitHub 사용자명과 저장소명으로 바꿉니다.
+
+```bash
+git clone https://github.com/OWNER/REPOSITORY.git
+cd REPOSITORY
+```
+
+Clone을 마쳤거나 이미 로컬 저장소가 있다면 원격 저장소의 최신 브랜치 정보를 가져온 뒤 작업 브랜치로 전환합니다.
 
 ```bash
 git fetch origin
