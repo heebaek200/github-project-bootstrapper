@@ -113,6 +113,90 @@ git push
 
 > 저장소에서 파일을 삭제해도 과거 Commit 기록에는 남아 있습니다. 파일에 개인정보가 담기지 않도록 주의하고, 만약 비밀번호나 API Key를 올렸다면 파일 삭제만으로 끝내지 말고 해당 비밀번호나 Key도 즉시 변경합니다.
 
+## 비밀번호나 API Key를 Commit하고 Push했다면?
+
+아래 순서대로 처리합니다.
+
+### 팀원 전원
+
+1. 즉시 모든 팀원에게 알립니다.
+2. 모든 Commit, Push, Pull Request와 Merge를 중단합니다.
+3. 노출된 비밀번호, API Key와 Token을 모두 폐기하거나 변경합니다.
+4. 같은 값을 다른 곳에서도 사용했다면 그 값도 모두 변경합니다.
+5. 새 값을 환경변수에 다시 설정합니다.
+6. 실제 비밀번호나 Key를 Issue, 채팅 또는 문서에 적지 않습니다.
+7. 아직 Push하지 않은 작업이 있다면 삭제하지 말고 저장소 관리자에게 알립니다.
+
+### 저장소 관리자
+
+1. 팀원에게 작업 중단 여부를 확인합니다.
+2. 열린 Pull Request를 모두 닫거나 먼저 정리합니다.
+3. `git-filter-repo` 2.47 이상을 설치합니다.
+4. 기존 작업 폴더가 아닌 새 폴더에 저장소를 Clone합니다.
+
+```bash
+git clone https://github.com/OWNER/REPOSITORY.git repository-clean
+cd repository-clean
+```
+
+5. 다음 두 방법 중 하나만 실행합니다.
+
+파일 전체를 모든 Commit에서 삭제하려면 다음 명령을 실행합니다.
+
+```bash
+git filter-repo --sensitive-data-removal --invert-paths --path 비밀값이_들어간_파일경로
+```
+
+파일은 남기고 비밀번호 문자열만 제거하려면 저장소 밖에 `passwords.txt`를 만들고, 노출된 값을 한 줄에 하나씩 적은 뒤 다음 명령을 실행합니다.
+
+```bash
+git filter-repo --sensitive-data-removal --replace-text ../passwords.txt
+```
+
+6. `passwords.txt`를 사용했다면 즉시 삭제합니다.
+7. 정리한 저장소에서 비밀값을 제거하고 환경변수를 사용하도록 소스를 수정합니다.
+8. 비밀값이 들어가는 로컬 설정 파일을 `.gitignore`에 추가합니다.
+9. 수정 내용을 Commit합니다.
+
+```bash
+git add 수정한_파일 .gitignore
+git commit -m "민감정보 제거"
+```
+
+10. `git remote -v`를 실행합니다. `origin`이 나오지 않으면 다시 등록합니다.
+
+```bash
+git remote add origin https://github.com/OWNER/REPOSITORY.git
+```
+
+11. Ruleset 또는 브랜치 보호가 Push를 막으면 잠시 해제합니다.
+12. 정리된 이력을 원격 저장소에 반영합니다.
+
+```bash
+git push --force --mirror origin
+```
+
+13. 잠시 해제했던 Ruleset 또는 브랜치 보호를 다시 켭니다.
+14. Fork가 있다면 Fork 소유자에게 삭제 또는 이력 정리를 요청합니다.
+15. 실제 민감정보가 Pull Request나 캐시에 남아 있다면 [GitHub Support](https://support.github.com/)에 삭제를 요청합니다.
+16. 작업이 끝났다고 모든 팀원에게 알립니다.
+
+### 저장소 정리 완료 후 팀원 전원
+
+1. 기존 로컬 저장소에서는 더 이상 Pull하거나 Push하지 않습니다.
+2. Push하지 않은 작업이 없다면 기존 로컬 저장소 폴더를 삭제합니다.
+3. 저장소를 다시 Clone합니다.
+
+```bash
+git clone https://github.com/OWNER/REPOSITORY.git
+```
+
+4. 새 환경변수를 설정합니다.
+5. 프로그램 실행과 데이터베이스 연결을 확인합니다.
+6. 저장소 관리자의 허락을 받은 뒤 작업을 다시 시작합니다.
+
+[GitHub 공식 민감정보 삭제 절차](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)
+
 ## main 브랜치에서 작업해버린 것을 뒤늦게 알아차렸다면?
 
 ### case: 아직 Commit 전

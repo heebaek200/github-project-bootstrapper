@@ -68,8 +68,11 @@ gh auth setup-git
   - Packaging: Jar
   - Configuration: YAML
   - Java: 21
-  - Dependencies: Spring Web, Mustache, Lombok
+  - Dependencies: Spring Web, Mustache, Lombok, Spring Boot DevTools
   - Spring Data JPA와 MySQL은 MySQL 기능 구현 전까지 제외
+  - 기본 활성 프로필: `dev`
+  - `application-dev.yaml`: 포트 8080, 루트 INFO, 프로젝트 Package DEBUG
+  - `application-prod.yaml`: 포트 5000
 - Spring Metadata 자동 입력
   - Group: `fullstack.teamproject`
   - Artifact: 저장소 물리명에서 하이픈, 밑줄 등 구분 문자를 제거한 소문자 이름
@@ -105,7 +108,7 @@ README.md
 
 다음을 자동으로 수행합니다.
 
-- `wiki` 폴더 최상위의 모든 Markdown 파일을 Wiki에 푸시 (`Home.md` 포함, 1개 이상)
+- `wiki` 폴더 최상위의 모든 Markdown 파일과 `wiki/images` 이미지를 Wiki에 푸시 (`Home.md` 포함, Markdown 1개 이상)
 - 수동 초기화용 Home을 템플릿 `Home.md`로 교체
 - Public GitHub Project 생성 또는 동일 제목의 기존 Project 재사용
 - Project의 기존 연결 저장소를 정리하고 현재 입력한 저장소만 연결
@@ -151,7 +154,7 @@ team-project-starter/
 ├─ 팀프로젝트-시작.vbs       GUI 실행 파일
 ├─ TeamProjectStarter.ps1    프로그램 본체
 ├─ .gitignore                새 저장소용 고정 템플릿
-├─ wiki/                     Wiki 템플릿(최상위 Markdown 파일 전체)
+├─ wiki/                     Wiki 템플릿(최상위 Markdown 파일과 images 폴더)
 ├─ docs/images/              README 실행 화면 이미지
 ├─ logs/                     날짜별 실행 로그(실행 후 생성, Git 제외)
 └─ state.json                마지막 실행 결과(실행 후 생성, Git 제외)

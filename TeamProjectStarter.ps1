@@ -471,12 +471,50 @@ function Get-SpringInitializrUri {
         packaging = 'jar'
         javaVersion = $script:JavaVersion
         configurationFileFormat = 'yaml'
-        dependencies = 'web,mustache,lombok'
+        dependencies = 'web,mustache,lombok,devtools'
     }
     $query = @($parameters.GetEnumerator() | ForEach-Object {
         '{0}={1}' -f [uri]::EscapeDataString([string]$_.Key), [uri]::EscapeDataString([string]$_.Value)
     }) -join '&'
     return "https://start.spring.io/starter.zip?$query"
+}
+
+function Set-SpringProfileConfiguration {
+    param(
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$Package
+    )
+
+    $resourcesPath = Join-Path $Destination 'src\main\resources'
+    $applicationPath = Join-Path $resourcesPath 'application.yaml'
+    if (-not (Test-Path -LiteralPath $applicationPath -PathType Leaf)) {
+        throw "Spring 설정 파일을 찾지 못했습니다: $applicationPath"
+    }
+
+    $application = Get-Content -Raw -LiteralPath $applicationPath
+    if ($application -notmatch '(?m)^spring:\s*$') {
+        throw 'application.yaml에서 spring 설정을 찾지 못했습니다.'
+    }
+    $application = $application.TrimEnd() + "`r`n  profiles:`r`n    active: dev`r`n"
+    [System.IO.File]::WriteAllText($applicationPath, $application, $script:Utf8Encoding)
+
+    $production = @"
+server:
+  port: 5000
+"@
+    [System.IO.File]::WriteAllText((Join-Path $resourcesPath 'application-prod.yaml'), $production, $script:Utf8Encoding)
+
+    $development = @"
+server:
+  port: 8080
+
+logging:
+  level:
+    root: INFO                  # 스프링과 라이브러리는 INFO 이상만 콘솔에 출력
+    ${Package}: DEBUG    # 내가 작성한 코드는 DEBUG 이상까지 출력
+"@
+    [System.IO.File]::WriteAllText((Join-Path $resourcesPath 'application-dev.yaml'), $development, $script:Utf8Encoding)
+    Write-AppLog "dev 프로필과 dev/prod 환경별 설정 파일을 생성했습니다. DEBUG 로거: $Package" 'OK'
 }
 
 function Initialize-SpringBootProject {
@@ -495,12 +533,13 @@ function Initialize-SpringBootProject {
         Write-AppLog ("Spring Initializr에서 Spring Boot {0} / Java {1} 프로젝트를 내려받습니다." -f $script:SpringBootVersion, $script:JavaVersion)
         Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $archivePath
         Expand-Archive -LiteralPath $archivePath -DestinationPath $Destination -Force
+        Set-SpringProfileConfiguration -Destination $Destination -Package $Package
 
         $helpPath = Join-Path $Destination 'HELP.md'
         if (Test-Path -LiteralPath $helpPath -PathType Leaf) {
             Remove-Item -LiteralPath $helpPath -Force
         }
-        Write-AppLog 'Spring Web, Mustache, Lombok 기반 프로젝트를 준비했습니다. JPA와 MySQL은 제외했습니다.' 'OK'
+        Write-AppLog 'Spring Web, Mustache, Lombok, DevTools 기반 프로젝트를 준비했습니다. JPA와 MySQL은 제외했습니다.' 'OK'
     }
     finally {
         if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
@@ -661,6 +700,19 @@ function Sync-WikiTemplates {
         $wikiFiles | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $workRoot $_.Name) -Force
         }
+        $wikiImagesPath = Join-Path $script:WikiTemplatePath 'images'
+        $wikiImageCount = 0
+        if (Test-Path -LiteralPath $wikiImagesPath -PathType Container) {
+            $wikiImages = @(Get-ChildItem -LiteralPath $wikiImagesPath -File)
+            $wikiImageCount = $wikiImages.Count
+            $wikiImagesDestination = Join-Path $workRoot 'images'
+            if (-not (Test-Path -LiteralPath $wikiImagesDestination -PathType Container)) {
+                New-Item -ItemType Directory -Path $wikiImagesDestination | Out-Null
+            }
+            $wikiImages | ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $wikiImagesDestination $_.Name) -Force
+            }
+        }
 
         $status = Invoke-Git -Arguments @('status', '--porcelain') -WorkingDirectory $workRoot -Quiet
         if ([string]::IsNullOrWhiteSpace($status.Output)) {
@@ -671,7 +723,7 @@ function Sync-WikiTemplates {
         Invoke-Git -Arguments @('add', '.') -WorkingDirectory $workRoot | Out-Null
         Invoke-Git -Arguments @('commit', '-m', 'docs: initialize team wiki') -WorkingDirectory $workRoot | Out-Null
         Invoke-Git -Arguments @('push', 'origin', 'HEAD') -WorkingDirectory $workRoot | Out-Null
-        Write-AppLog ("초기화용 Home을 템플릿 Home으로 교체하고 Wiki Markdown 문서 {0}개를 푸시했습니다." -f $wikiFiles.Count) 'OK'
+        Write-AppLog ("초기화용 Home을 교체하고 Wiki Markdown 문서 {0}개와 이미지 {1}개를 푸시했습니다." -f $wikiFiles.Count, $wikiImageCount) 'OK'
     }
     finally {
         if (Test-Path -LiteralPath $workRoot) {
@@ -1205,7 +1257,7 @@ Ensure-LocalFolders
             <Button Name="OpenRepositoryButton" Content="저장소 열기" Width="125" Height="42" MinHeight="42" Margin="10,0,0,0" FontWeight="SemiBold"/>
           </StackPanel>
           <Border Grid.Row="7" Background="#FFF8C5" BorderBrush="#D4A72C" BorderThickness="1" CornerRadius="6" Padding="12">
-            <TextBlock TextWrapping="Wrap" Text="Public 저장소에 고정 .gitignore, README, 설계 문서를 푸시합니다. Spring Boot 선택 시 Gradle Groovy · Java 21 · Boot 4.1.1과 Web · Mustache · Lombok을 포함합니다. 이후 Ruleset과 Pages를 설정합니다." Foreground="#633C01"/>
+            <TextBlock TextWrapping="Wrap" Text="Public 저장소에 고정 .gitignore, README, 설계 문서를 푸시합니다. Spring Boot 선택 시 Gradle Groovy · Java 21 · Boot 4.1.1과 Web · Mustache · Lombok · DevTools를 포함합니다. 이후 Ruleset과 Pages를 설정합니다." Foreground="#633C01"/>
           </Border>
         </Grid>
         </ScrollViewer>

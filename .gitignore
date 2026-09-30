@@ -288,6 +288,12 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/windows,macos,eclipse,visualstudiocode,intellij,java
 
+### Environment variables ###
+# 실제 환경변수 파일은 제외하고 공유용 예제 파일만 포함합니다.
+.env
+*.env
+!.env.example
+
 ### Gradle project ###
 # Spring Initializr 프로젝트의 로컬 캐시와 빌드 산출물은 제외합니다.
 .gradle/
