@@ -8,6 +8,7 @@ Windows에서 GitHub 팀 프로젝트의 초기 구성을 GUI로 자동화하는
 - Windows PowerShell 5.1과 WPF
 - Git for Windows
 - 최신 GitHub CLI(`gh`)
+- Spring Boot 초기화 기능 사용 시 `start.spring.io`에 연결할 수 있는 인터넷 환경
 - GitHub 개인 계정
   - 현재 버전은 개인 계정 소유 저장소와 Project만 지원합니다.
   - Organization 소유 저장소와 Project는 지원하지 않습니다.
@@ -43,7 +44,7 @@ gh auth setup-git
 1. 이 저장소를 내려받거나 압축 파일을 풀고 폴더 구조를 유지합니다.
 2. `팀프로젝트-시작.vbs`를 더블클릭합니다. 터미널 창 없이 GUI가 열립니다.
 3. **사전 점검**을 눌러 Git, GitHub CLI, 활성 로그인 계정, Project 접근 권한과 템플릿 파일을 확인합니다.
-4. **1. 저장소 만들기**에서 저장소 물리명과 논리명을 입력하고 저장소를 생성합니다.
+4. **1. 저장소 만들기**에서 저장소 물리명과 논리명을 입력합니다. 기초 Spring 프로젝트가 필요하면 **Spring Boot 기초 프로젝트 초기화**를 선택하고 자동 입력된 Metadata를 확인한 뒤 저장소를 생성합니다.
 
    ![저장소 만들기 화면](docs/images/Screenshot_1.png)
 
@@ -59,7 +60,20 @@ gh auth setup-git
 다음을 자동으로 수행합니다.
 
 - Public 저장소 생성
-- 고정 `.gitignore`와 `docs/index.md` 커밋
+- 고정 `.gitignore`, `README.md`, `docs/index.md`와 설계 문서 6개 커밋
+- 선택 시 Spring Initializr 기반 기초 프로젝트 생성
+  - Project: Gradle - Groovy
+  - Language: Java
+  - Spring Boot: 4.1.1
+  - Packaging: Jar
+  - Configuration: YAML
+  - Java: 21
+  - Dependencies: Spring Web, Mustache, Lombok
+  - Spring Data JPA와 MySQL은 MySQL 기능 구현 전까지 제외
+- Spring Metadata 자동 입력
+  - Group: `fullstack.teamproject`
+  - Artifact: 저장소 물리명에서 하이픈, 밑줄 등 구분 문자를 제거한 소문자 이름
+  - Package: `fullstack.teamproject.{artifact}`
 - `main` 브랜치 푸시
 - `protect-main` Ruleset 생성
   - Active
@@ -70,16 +84,31 @@ gh auth setup-git
   - Force push 차단
 - GitHub Pages를 `main` 브랜치의 `/docs`로 설정
 
+생성되는 `README.md`는 `docs/index.md`만 연결하고, 문서 목차에서 다음 설계 문서로 이동하는 2단계 구조를 사용합니다.
+
+```text
+README.md
+└─ docs/index.md
+   ├─ requirements.md
+   ├─ business-rules.md
+   ├─ database-design.md
+   ├─ screen-design.md
+   ├─ api-design.md
+   └─ convention.md
+```
+
+설계 문서는 제목과 작성 안내만 들어 있는 초기 상태로 만들어집니다. 프로젝트별 내용은 생성 후 팀의 설계 과정에서 채웁니다. Initializr가 생성한 `.gitignore`는 사용하지 않고 프로그램 폴더의 고정 `.gitignore` 템플릿으로 항상 덮어씁니다.
+
 1단계가 끝나면 GitHub 저장소의 Wiki에서 임시 `Home` 페이지를 한 번 수동 생성해야 합니다. 이 과정이 없으면 Wiki Git 저장소가 만들어지지 않아 2단계를 진행할 수 없습니다.
 
 ## 2단계: Wiki · Project 구성
 
 다음을 자동으로 수행합니다.
 
-- `wiki` 폴더의 Markdown 4개를 Wiki에 푸시
+- `wiki` 폴더 최상위의 모든 Markdown 파일을 Wiki에 푸시 (`Home.md` 포함, 1개 이상)
 - 수동 초기화용 Home을 템플릿 `Home.md`로 교체
 - Public GitHub Project 생성 또는 동일 제목의 기존 Project 재사용
-- Project의 연결 저장소는 비워 둠
+- Project의 기존 연결 저장소를 정리하고 현재 입력한 저장소만 연결
 - Status를 `Todo / In Progress / Done`으로 정리
 - 라벨을 `설계 / 기능구현 / 테스트`로 정리
 - `시작일`, `완료(예정)일` 날짜 필드 생성
@@ -90,7 +119,7 @@ gh auth setup-git
 
 조원 입력은 선택사항입니다. 비워두면 저장소 및 Project 초대를 건너뜁니다. 입력한 경우 저장소와 Project에 WRITE 권한을 설정합니다.
 
-`Project 설정` 버튼은 마지막으로 구성한 Project의 Settings 페이지를 열어 줍니다. 여기에서 `Default repository`를 대상 저장소 물리명으로 선택할 수 있습니다.
+Project 연결은 자동으로 처리되지만 `Default repository`는 자동 지정하지 않습니다. `Project 설정` 버튼은 마지막으로 구성한 Project의 Settings 페이지를 열어 줍니다. 여기에서 `Default repository`를 대상 저장소 물리명으로 직접 선택합니다.
 
 2단계는 대상 저장소의 기존 라벨과 Project의 기존 보기 및 Status 선택지를 지정된 구성으로 교체합니다. 이미 사용 중인 저장소나 Project에 실행할 때는 기존 설정이 삭제될 수 있으므로 먼저 내용을 확인하세요.
 
@@ -104,7 +133,7 @@ gh auth setup-git
 gh auth status --active --hostname github.com
 ```
 
-조직 계정 지원, Project의 `Default repository` 자동 지정 및 Wiki 최초 생성 자동화는 현재 범위에 포함되지 않습니다.
+조직 계정 지원, Project의 `Default repository` 자동 지정, Wiki 최초 생성 자동화, MySQL 및 Flutter 초기화는 현재 범위에 포함되지 않습니다.
 
 ## 로컬 데이터와 개인정보
 
@@ -122,7 +151,8 @@ team-project-starter/
 ├─ 팀프로젝트-시작.vbs       GUI 실행 파일
 ├─ TeamProjectStarter.ps1    프로그램 본체
 ├─ .gitignore                새 저장소용 고정 템플릿
-├─ wiki/                     Wiki 템플릿
+├─ wiki/                     Wiki 템플릿(최상위 Markdown 파일 전체)
+├─ docs/images/              README 실행 화면 이미지
 ├─ logs/                     날짜별 실행 로그(실행 후 생성, Git 제외)
 └─ state.json                마지막 실행 결과(실행 후 생성, Git 제외)
 ```

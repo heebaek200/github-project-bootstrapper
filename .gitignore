@@ -72,6 +72,7 @@ local.properties
 # Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
 
 # User-specific stuff
+.idea/.gitignore
 .idea/**/workspace.xml
 .idea/**/tasks.xml
 .idea/**/usage.statistics.xml
@@ -89,6 +90,7 @@ local.properties
 .idea/**/dataSources.ids
 .idea/**/dataSources.local.xml
 .idea/**/sqlDataSources.xml
+.idea/queries/
 .idea/**/dynamic.xml
 .idea/**/uiDesigner.xml
 .idea/**/dbnavigator.xml
@@ -285,6 +287,14 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/windows,macos,eclipse,visualstudiocode,intellij,java
+
+### Gradle project ###
+# Spring Initializr 프로젝트의 로컬 캐시와 빌드 산출물은 제외합니다.
+.gradle/
+build/
+
+# 다른 컴퓨터에서도 별도 Gradle 설치 없이 실행할 수 있도록 Wrapper JAR는 포함합니다.
+!gradle/wrapper/gradle-wrapper.jar
 
 ### Team Project Starter local runtime ###
 # 현재 로그인 계정, 최근 저장소 및 Project URL이 저장됩니다.

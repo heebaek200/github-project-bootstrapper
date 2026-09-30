@@ -31,6 +31,15 @@ $script:OwnerId = $null
 $script:LogBox = $null
 $script:StatusText = $null
 $script:ProgressBar = $null
+$script:SpringBootVersion = '4.1.1'
+$script:JavaVersion = '21'
+$script:DefaultGroupId = 'fullstack.teamproject'
+# 다음 수업 진도에서 GUI와 생성 로직을 연결할 기능 자리다. 구현 전에는 화면에 노출하지 않는다.
+$script:ProjectFeatures = [ordered]@{
+    SpringBoot = [ordered]@{ Visible = $true; Implemented = $true }
+    MySql = [ordered]@{ Visible = $false; Implemented = $false }
+    Flutter = [ordered]@{ Visible = $false; Implemented = $false }
+}
 
 function Ensure-LocalFolders {
     if (-not (Test-Path -LiteralPath $script:LogsPath)) {
@@ -327,13 +336,13 @@ function Invoke-Preflight {
         throw "Wiki 템플릿 폴더가 없습니다: $($script:WikiTemplatePath)"
     }
     $wikiFiles = @(Get-ChildItem -LiteralPath $script:WikiTemplatePath -Filter '*.md' -File)
-    if ($wikiFiles.Count -ne 4) {
-        throw "wiki 폴더에는 Markdown 파일이 정확히 4개 있어야 합니다. 현재: $($wikiFiles.Count)개"
+    if ($wikiFiles.Count -lt 1) {
+        throw 'wiki 폴더에는 Markdown 파일이 하나 이상 있어야 합니다.'
     }
     if (-not (Test-Path -LiteralPath (Join-Path $script:WikiTemplatePath 'Home.md') -PathType Leaf)) {
         throw 'wiki\Home.md가 없습니다.'
     }
-    Write-AppLog '고정 .gitignore와 Wiki 템플릿 4개를 확인했습니다.' 'OK'
+    Write-AppLog ("고정 .gitignore와 Wiki Markdown 템플릿 {0}개를 확인했습니다." -f $wikiFiles.Count) 'OK'
 
     Set-AppStatus ("준비 완료 — {0}" -f $script:Owner) 100
     return $true
@@ -424,14 +433,154 @@ function Enable-GitHubPages {
     Write-AppLog ("GitHub Pages를 main /docs로 설정했습니다: {0}" -f $pages.html_url) 'OK'
 }
 
+function ConvertTo-JavaArtifactName {
+    param([string]$Repository)
+
+    $artifact = ([string]$Repository).ToLowerInvariant() -replace '[^a-z0-9]', ''
+    if ([string]::IsNullOrWhiteSpace($artifact)) { return 'application' }
+    if ($artifact -match '^[0-9]') { return "app$artifact" }
+    return $artifact
+}
+
+function Test-JavaPackageName {
+    param([string]$Name)
+    return (-not [string]::IsNullOrWhiteSpace($Name)) -and
+        ($Name -match '^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$')
+}
+
+function Get-SpringInitializrUri {
+    param(
+        [Parameter(Mandatory = $true)][string]$Artifact,
+        [Parameter(Mandatory = $true)][string]$Group,
+        [Parameter(Mandatory = $true)][string]$Package,
+        [Parameter(Mandatory = $true)][string]$ProjectName
+    )
+
+    # JPA와 MySQL은 후속 기능이 구현될 때 함께 추가한다.
+    $parameters = [ordered]@{
+        type = 'gradle-project'
+        language = 'java'
+        bootVersion = $script:SpringBootVersion
+        groupId = $Group
+        artifactId = $Artifact
+        # 한글 논리명을 name에 사용하면 Java Application 클래스명도 한글이 되므로
+        # 실행 클래스에는 안전한 Artifact를 쓰고 한글 이름은 설명으로 보존한다.
+        name = $Artifact
+        description = $ProjectName
+        packageName = $Package
+        packaging = 'jar'
+        javaVersion = $script:JavaVersion
+        configurationFileFormat = 'yaml'
+        dependencies = 'web,mustache,lombok'
+    }
+    $query = @($parameters.GetEnumerator() | ForEach-Object {
+        '{0}={1}' -f [uri]::EscapeDataString([string]$_.Key), [uri]::EscapeDataString([string]$_.Value)
+    }) -join '&'
+    return "https://start.spring.io/starter.zip?$query"
+}
+
+function Initialize-SpringBootProject {
+    param(
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$Artifact,
+        [Parameter(Mandatory = $true)][string]$Group,
+        [Parameter(Mandatory = $true)][string]$Package,
+        [Parameter(Mandatory = $true)][string]$ProjectName
+    )
+
+    $archivePath = Join-Path ([System.IO.Path]::GetTempPath()) ("team-project-starter-spring-{0}.zip" -f [guid]::NewGuid().ToString('N'))
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $uri = Get-SpringInitializrUri -Artifact $Artifact -Group $Group -Package $Package -ProjectName $ProjectName
+        Write-AppLog ("Spring Initializr에서 Spring Boot {0} / Java {1} 프로젝트를 내려받습니다." -f $script:SpringBootVersion, $script:JavaVersion)
+        Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $archivePath
+        Expand-Archive -LiteralPath $archivePath -DestinationPath $Destination -Force
+
+        $helpPath = Join-Path $Destination 'HELP.md'
+        if (Test-Path -LiteralPath $helpPath -PathType Leaf) {
+            Remove-Item -LiteralPath $helpPath -Force
+        }
+        Write-AppLog 'Spring Web, Mustache, Lombok 기반 프로젝트를 준비했습니다. JPA와 MySQL은 제외했습니다.' 'OK'
+    }
+    finally {
+        if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+            Remove-Item -LiteralPath $archivePath -Force
+        }
+    }
+}
+
+function New-ProjectDocumentation {
+    param(
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$ProjectName
+    )
+
+    $docsPath = Join-Path $Destination 'docs'
+    if (-not (Test-Path -LiteralPath $docsPath -PathType Container)) {
+        New-Item -ItemType Directory -Path $docsPath | Out-Null
+    }
+
+    $documents = [ordered]@{
+        'requirements.md' = '요구사항'
+        'business-rules.md' = '사용자 시나리오 및 업무 규칙'
+        'database-design.md' = '데이터베이스 설계서 및 ERD'
+        'screen-design.md' = '화면 설계서'
+        'api-design.md' = 'REST API 설계서'
+        'convention.md' = '코드 컨벤션'
+    }
+    foreach ($document in $documents.GetEnumerator()) {
+        $content = "# $($document.Value)`r`n`r`n> 프로젝트 설계 과정에서 내용을 작성합니다.`r`n"
+        [System.IO.File]::WriteAllText((Join-Path $docsPath $document.Key), $content, $script:Utf8Encoding)
+    }
+
+    $indexLines = @(
+        '---',
+        "title: $ProjectName",
+        '---',
+        '',
+        "# $ProjectName",
+        '',
+        '- [요구사항](requirements.md)',
+        '- [사용자 시나리오 및 업무 규칙](business-rules.md)',
+        '- [데이터베이스 설계서 및 ERD](database-design.md)',
+        '- [화면 설계서](screen-design.md)',
+        '- [REST API 설계서](api-design.md)',
+        '- [코드 컨벤션](convention.md)',
+        ''
+    )
+    [System.IO.File]::WriteAllLines((Join-Path $docsPath 'index.md'), $indexLines, $script:Utf8Encoding)
+
+    $readme = "# $ProjectName`r`n`r`n[프로젝트 설계 문서 보기](docs/index.md)`r`n"
+    [System.IO.File]::WriteAllText((Join-Path $Destination 'README.md'), $readme, $script:Utf8Encoding)
+    Write-AppLog 'README와 설계 문서 6개 및 문서 목차를 준비했습니다.' 'OK'
+}
+
 function New-GitHubRepository {
-    param([string]$Repository, [string]$Description)
+    param(
+        [string]$Repository,
+        [string]$Description,
+        [bool]$InitializeSpringBoot = $false,
+        [string]$SpringGroup = '',
+        [string]$SpringArtifact = '',
+        [string]$SpringPackage = ''
+    )
 
     if (-not (Test-RepositoryName $Repository)) {
         throw '저장소 물리명에는 영문, 숫자, 점, 밑줄, 하이픈만 사용할 수 있습니다.'
     }
     if ([string]::IsNullOrWhiteSpace($Description)) {
         throw '저장소 논리명을 입력해 주세요.'
+    }
+    if ($InitializeSpringBoot) {
+        if ($SpringGroup -notmatch '^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$') {
+            throw 'Spring Group은 소문자 영문과 숫자로 구성된 점(.) 구분 이름이어야 합니다.'
+        }
+        if ($SpringArtifact -notmatch '^[a-z][a-z0-9]*$') {
+            throw 'Spring Artifact는 소문자 영문으로 시작하고 소문자 영문과 숫자만 사용할 수 있습니다.'
+        }
+        if (-not (Test-JavaPackageName $SpringPackage)) {
+            throw 'Spring Package는 소문자 영문과 숫자로 구성된 점(.) 구분 Java 패키지명이어야 합니다.'
+        }
     }
 
     Invoke-Preflight | Out-Null
@@ -445,19 +594,13 @@ function New-GitHubRepository {
     New-Item -ItemType Directory -Path $workRoot | Out-Null
     try {
         Set-AppStatus '로컬 기본 파일을 준비하는 중...' 20
+        if ($InitializeSpringBoot) {
+            Set-AppStatus 'Spring Boot 프로젝트를 내려받는 중...' 12
+            Initialize-SpringBootProject -Destination $workRoot -Artifact $SpringArtifact -Group $SpringGroup -Package $SpringPackage -ProjectName $Description
+        }
+        New-ProjectDocumentation -Destination $workRoot -ProjectName $Description
+        # Initializr가 만든 파일보다 프로그램 폴더의 고정 템플릿을 항상 우선한다.
         Copy-Item -LiteralPath $script:GitIgnorePath -Destination (Join-Path $workRoot '.gitignore')
-        $docsPath = Join-Path $workRoot 'docs'
-        New-Item -ItemType Directory -Path $docsPath | Out-Null
-        $index = @"
----
-title: $Description
----
-
-# $Description
-
-프로젝트 문서 페이지입니다.
-"@
-        [System.IO.File]::WriteAllText((Join-Path $docsPath 'index.md'), $index, (New-Object System.Text.UTF8Encoding($false)))
 
         Invoke-Git -Arguments @('init', '-b', 'main') -WorkingDirectory $workRoot | Out-Null
         Invoke-Git -Arguments @('config', 'user.name', $script:Owner) -WorkingDirectory $workRoot | Out-Null
@@ -514,7 +657,8 @@ function Sync-WikiTemplates {
 
         Invoke-Git -Arguments @('config', 'user.name', $script:Owner) -WorkingDirectory $workRoot | Out-Null
         Invoke-Git -Arguments @('config', 'user.email', "$($script:OwnerId)+$($script:Owner)@users.noreply.github.com") -WorkingDirectory $workRoot | Out-Null
-        Get-ChildItem -LiteralPath $script:WikiTemplatePath -Filter '*.md' -File | ForEach-Object {
+        $wikiFiles = @(Get-ChildItem -LiteralPath $script:WikiTemplatePath -Filter '*.md' -File)
+        $wikiFiles | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $workRoot $_.Name) -Force
         }
 
@@ -527,7 +671,7 @@ function Sync-WikiTemplates {
         Invoke-Git -Arguments @('add', '.') -WorkingDirectory $workRoot | Out-Null
         Invoke-Git -Arguments @('commit', '-m', 'docs: initialize team wiki') -WorkingDirectory $workRoot | Out-Null
         Invoke-Git -Arguments @('push', 'origin', 'HEAD') -WorkingDirectory $workRoot | Out-Null
-        Write-AppLog '초기화용 Home을 템플릿 Home으로 교체하고 Wiki 문서 4개를 푸시했습니다.' 'OK'
+        Write-AppLog ("초기화용 Home을 템플릿 Home으로 교체하고 Wiki Markdown 문서 {0}개를 푸시했습니다." -f $wikiFiles.Count) 'OK'
     }
     finally {
         if (Test-Path -LiteralPath $workRoot) {
@@ -790,8 +934,8 @@ function Get-OrCreateProject {
     return $project
 }
 
-function Remove-ProjectRepositoryLinks {
-    param([int]$ProjectNumber, [string]$ProjectNodeId)
+function Set-ProjectRepositoryLink {
+    param([int]$ProjectNumber, [string]$ProjectNodeId, [string]$Repository)
 
     $query = @'
 query($id: ID!) {
@@ -805,10 +949,16 @@ query($id: ID!) {
     $result = Invoke-GhGraphQL -Query $query -Variables @{ id = $ProjectNodeId }
     $data = ConvertFrom-JsonSafe -Text $result.Output -Context 'Project 연결 저장소 목록'
     $repositories = @($data.data.node.repositories.nodes)
+    $targetRepository = "$($script:Owner)/$Repository"
+    $targetIsLinked = $false
 
     foreach ($linkedRepository in $repositories) {
         $nameWithOwner = [string]$linkedRepository.nameWithOwner
         if ([string]::IsNullOrWhiteSpace($nameWithOwner)) { continue }
+        if ($nameWithOwner -eq $targetRepository) {
+            $targetIsLinked = $true
+            continue
+        }
         Invoke-Gh -Arguments @(
             'project', 'unlink', [string]$ProjectNumber,
             '--owner', $script:Owner,
@@ -817,9 +967,14 @@ query($id: ID!) {
         Write-AppLog "Project 연결 저장소를 해제했습니다: $nameWithOwner" 'INFO'
     }
 
-    if ($repositories.Count -eq 0) {
-        Write-AppLog 'Project 연결 저장소가 이미 비어 있습니다.' 'INFO'
+    if (-not $targetIsLinked) {
+        Invoke-Gh -Arguments @(
+            'project', 'link', [string]$ProjectNumber,
+            '--owner', $script:Owner,
+            '--repo', $targetRepository
+        ) | Out-Null
     }
+    Write-AppLog "Project 연결 저장소를 현재 저장소로 설정했습니다: $targetRepository" 'OK'
 }
 
 function Add-RepositoryCollaborator {
@@ -881,8 +1036,8 @@ function Configure-TeamProject {
     $projectNodeId = [string]$project.id
 
     Invoke-Gh -Arguments @('project', 'edit', [string]$projectNumber, '--owner', $script:Owner, '--visibility', 'PUBLIC') | Out-Null
-    Remove-ProjectRepositoryLinks -ProjectNumber $projectNumber -ProjectNodeId $projectNodeId
-    Write-AppLog 'Project를 Public으로 설정하고 연결 저장소는 비워두었습니다.' 'OK'
+    Set-ProjectRepositoryLink -ProjectNumber $projectNumber -ProjectNodeId $projectNodeId -Repository $Repository
+    Write-AppLog 'Project를 Public으로 설정하고 현재 저장소를 연결했습니다.' 'OK'
 
     Set-AppStatus '필드와 라벨을 정리하는 중...' 46
     $fields = @(Get-ProjectFields -ProjectNumber $projectNumber)
@@ -985,7 +1140,7 @@ Ensure-LocalFolders
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="팀 프로젝트 시작 도구" Height="800" Width="840"
+        Title="팀 프로젝트 시작 도구" Height="800" Width="900"
         WindowStartupLocation="CenterScreen" ResizeMode="CanMinimize"
         Background="#F6F8FA" FontFamily="Segoe UI, Malgun Gothic">
   <Grid Margin="24">
@@ -1011,8 +1166,10 @@ Ensure-LocalFolders
 
     <TabControl Grid.Row="2" Name="MainTabs" Background="White" BorderBrush="#D0D7DE">
       <TabItem Header="1. 저장소 만들기">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <Grid Margin="24">
           <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
@@ -1021,14 +1178,37 @@ Ensure-LocalFolders
           <TextBox Grid.Row="1" Name="RepositoryNameBox" Height="38" FontSize="14" Padding="10,7" Margin="0,0,0,16"/>
           <TextBlock Grid.Row="2" Text="저장소 논리명 · Description" FontWeight="SemiBold" Margin="0,0,0,6"/>
           <TextBox Grid.Row="3" Name="DescriptionBox" Height="38" FontSize="14" Padding="10,7" Margin="0,0,0,18"/>
-          <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,0,0,18">
+          <CheckBox Grid.Row="4" Name="SpringBootCheckBox" Content="Spring Boot 기초 프로젝트 초기화" FontWeight="SemiBold" Margin="0,0,0,10"/>
+          <Border Grid.Row="5" Name="SpringMetadataPanel" Visibility="Collapsed" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,14">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="1.45*"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel Grid.Column="0">
+                <TextBlock Text="Group" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox Name="SpringGroupBox" Height="34" Padding="8,5"/>
+              </StackPanel>
+              <StackPanel Grid.Column="2">
+                <TextBlock Text="Artifact" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox Name="SpringArtifactBox" Height="34" Padding="8,5"/>
+              </StackPanel>
+              <StackPanel Grid.Column="4">
+                <TextBlock Text="Package" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox Name="SpringPackageBox" Height="34" Padding="8,5"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+          <StackPanel Grid.Row="6" Orientation="Horizontal" Margin="0,0,0,18">
             <Button Name="CreateRepositoryButton" Content="저장소 생성" Width="140" Height="42" MinHeight="42" Background="#1F883D" Foreground="White" FontWeight="SemiBold" BorderThickness="0"/>
             <Button Name="OpenRepositoryButton" Content="저장소 열기" Width="125" Height="42" MinHeight="42" Margin="10,0,0,0" FontWeight="SemiBold"/>
           </StackPanel>
-          <Border Grid.Row="5" Background="#FFF8C5" BorderBrush="#D4A72C" BorderThickness="1" CornerRadius="6" Padding="12">
-            <TextBlock TextWrapping="Wrap" Text="Public 저장소를 생성하고 .gitignore와 docs/index.md를 main에 푸시합니다. 이후 protect-main Ruleset과 main /docs 기반 GitHub Pages를 설정합니다." Foreground="#633C01"/>
+          <Border Grid.Row="7" Background="#FFF8C5" BorderBrush="#D4A72C" BorderThickness="1" CornerRadius="6" Padding="12">
+            <TextBlock TextWrapping="Wrap" Text="Public 저장소에 고정 .gitignore, README, 설계 문서를 푸시합니다. Spring Boot 선택 시 Gradle Groovy · Java 21 · Boot 4.1.1과 Web · Mustache · Lombok을 포함합니다. 이후 Ruleset과 Pages를 설정합니다." Foreground="#633C01"/>
           </Border>
         </Grid>
+        </ScrollViewer>
       </TabItem>
 
       <TabItem Header="2. Wiki · Project 구성">
@@ -1052,7 +1232,7 @@ Ensure-LocalFolders
             <Button Name="OpenProjectSettingsButton" Content="Project 설정" Width="125" Height="42" MinHeight="42" Margin="10,0,0,0" FontWeight="SemiBold"/>
           </StackPanel>
           <Border Grid.Row="7" Background="#FFEBE9" BorderBrush="#FF8182" BorderThickness="1" CornerRadius="6" Padding="10">
-            <TextBlock TextWrapping="Wrap" Text="실행하면 Wiki의 초기화용 Home을 템플릿 Home으로 교체하고, 저장소 라벨과 Project 기본 보기를 삭제·재구성합니다. Project의 연결 저장소는 비워 두며, 조원 입력이 비어 있으면 초대는 건너뜁니다." Foreground="#82071E"/>
+            <TextBlock TextWrapping="Wrap" Text="실행하면 Wiki의 초기화용 Home을 템플릿 Home으로 교체하고, 저장소 라벨과 Project 기본 보기를 삭제·재구성합니다. Project에는 현재 저장소만 연결하며, 조원 입력이 비어 있으면 초대는 건너뜁니다." Foreground="#82071E"/>
           </Border>
         </Grid>
       </TabItem>
@@ -1080,6 +1260,11 @@ $preflightButton = $window.FindName('PreflightButton')
 $accountText = $window.FindName('AccountText')
 $repositoryNameBox = $window.FindName('RepositoryNameBox')
 $descriptionBox = $window.FindName('DescriptionBox')
+$springBootCheckBox = $window.FindName('SpringBootCheckBox')
+$springMetadataPanel = $window.FindName('SpringMetadataPanel')
+$springGroupBox = $window.FindName('SpringGroupBox')
+$springArtifactBox = $window.FindName('SpringArtifactBox')
+$springPackageBox = $window.FindName('SpringPackageBox')
 $targetRepositoryBox = $window.FindName('TargetRepositoryBox')
 $projectTitleBox = $window.FindName('ProjectTitleBox')
 $membersBox = $window.FindName('MembersBox')
@@ -1098,6 +1283,38 @@ Set-Placeholder -TextBox $descriptionBox -Placeholder '예: 스터디룸 예약 
 Set-Placeholder -TextBox $targetRepositoryBox -Placeholder '예: study-room-reservation'
 Set-Placeholder -TextBox $projectTitleBox -Placeholder '예: 스터디룸 예약 프로젝트'
 Set-Placeholder -TextBox $membersBox -Placeholder "선택사항 — 한 줄에 한 명`n예: member-one`nmember-two"
+
+$springGroupBox.Text = $script:DefaultGroupId
+$springArtifactBox.Text = 'application'
+$springPackageBox.Text = "$($script:DefaultGroupId).application"
+
+$springBootCheckBox.Add_Checked({
+    $springMetadataPanel.Visibility = [System.Windows.Visibility]::Visible
+})
+$springBootCheckBox.Add_Unchecked({
+    $springMetadataPanel.Visibility = [System.Windows.Visibility]::Collapsed
+})
+$repositoryNameBox.Add_TextChanged({
+    $repository = Get-InputText $repositoryNameBox
+    if ([string]::IsNullOrWhiteSpace($repository)) { return }
+    $artifact = ConvertTo-JavaArtifactName $repository
+    $springArtifactBox.Text = $artifact
+    $springPackageBox.Text = "$($springGroupBox.Text.Trim()).$artifact"
+})
+$springGroupBox.Add_TextChanged({
+    if (($null -eq $springArtifactBox) -or ($null -eq $springPackageBox)) { return }
+    $artifact = $springArtifactBox.Text.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($artifact)) {
+        $springPackageBox.Text = "$($springGroupBox.Text.Trim()).$artifact"
+    }
+})
+$springArtifactBox.Add_TextChanged({
+    if ($null -eq $springPackageBox) { return }
+    $artifact = $springArtifactBox.Text.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($artifact)) {
+        $springPackageBox.Text = "$($springGroupBox.Text.Trim()).$artifact"
+    }
+})
 
 $state = Get-AppState
 if ($null -ne $state) {
@@ -1118,18 +1335,29 @@ $createRepositoryButton.Add_Click({
     Invoke-GuiAction {
         $repository = Get-InputText $repositoryNameBox
         $description = Get-InputText $descriptionBox
+        $initializeSpringBoot = [bool]$springBootCheckBox.IsChecked
+        $springSummary = if ($initializeSpringBoot) {
+            "사용 — Group: $($springGroupBox.Text.Trim()), Artifact: $($springArtifactBox.Text.Trim()), Package: $($springPackageBox.Text.Trim())"
+        } else { '사용 안 함' }
         $message = @"
 다음 Public 저장소를 생성하시겠습니까?
 
 저장소: $repository
 설명: $description
+Spring Boot: $springSummary
 
 main 보호 Ruleset과 공개 GitHub Pages도 함께 생성됩니다.
 "@
         $answer = [System.Windows.MessageBox]::Show($message, '저장소 생성 확인', [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
 
-        $repo = New-GitHubRepository -Repository $repository -Description $description
+        $repo = New-GitHubRepository `
+            -Repository $repository `
+            -Description $description `
+            -InitializeSpringBoot $initializeSpringBoot `
+            -SpringGroup $springGroupBox.Text.Trim() `
+            -SpringArtifact $springArtifactBox.Text.Trim() `
+            -SpringPackage $springPackageBox.Text.Trim()
         $targetRepositoryBox.Text = $repository
         $targetRepositoryBox.Foreground = [System.Windows.Media.Brushes]::Black
         $accountText.Text = "GitHub 계정: $($script:Owner) · 최근 저장소: $repository"
@@ -1154,7 +1382,8 @@ Project: $title
 • Wiki Home을 템플릿으로 교체합니다.
 • 저장소 라벨은 설계 / 기능구현 / 테스트만 남깁니다.
 • Project 보기는 작업 보드 / 작업 목록 / 프로젝트 일정만 남깁니다.
-• Project의 연결 저장소는 비워 둡니다.
+• Project에는 현재 입력한 저장소만 연결합니다.
+• Default repository는 Project 설정에서 수동으로 지정합니다.
 "@
         $answer = [System.Windows.MessageBox]::Show($message, '팀 환경 구성 확인', [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Warning)
         if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
