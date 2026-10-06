@@ -68,15 +68,22 @@ gh auth setup-git
   - Packaging: Jar
   - Configuration: YAML
   - Java: 21
-  - Dependencies: Spring Web, Mustache, Lombok, Spring Boot DevTools
-  - Spring Data JPA와 MySQL은 MySQL 기능 구현 전까지 제외
-  - 기본 활성 프로필: `dev`
-  - `application-dev.yaml`: 포트 8080, 루트 INFO, 프로젝트 Package DEBUG
-  - `application-prod.yaml`: 포트 5000
+  - Dependencies: Spring Web, Mustache, Lombok, Spring Boot DevTools, Spring Data JPA, MySQL Driver, H2 Database, Apache Commons Lang
+  - Apache Commons Lang은 Spring Boot가 관리하는 버전을 사용하므로 `build.gradle`에 별도 버전 없이 추가
+  - `application.yaml`: `.env` 선택적 불러오기, 실제 Artifact를 애플리케이션명으로 사용, `SPRING_PROFILES_ACTIVE` 우선 적용 후 기본 프로필 `local`
+  - `application-local.yaml`: 포트 8080, `jdbc:h2:mem:localdb`, H2 Console, JPA 테이블 자동 생성, 루트 INFO, 프로젝트 Package DEBUG
+  - `application-dev.yaml`: 포트 8080, MySQL, JPA 스키마 갱신, 선택적 `db/data.sql` 실행, 루트 INFO, 프로젝트 Package DEBUG
+  - `.env.example`: `dev` 프로필과 MySQL 환경변수 예시를 생성하며 DB URL에는 입력한 데이터베이스명 반영
 - Spring Metadata 자동 입력
   - Group: `fullstack.teamproject`
   - Artifact: 저장소 물리명에서 하이픈, 밑줄 등 구분 문자를 제거한 소문자 이름
   - Package: `fullstack.teamproject.{artifact}`
+- 데이터베이스 설정
+  - 별도 선택 없이 H2와 MySQL Driver 의존성을 함께 추가
+  - `local(H2)`과 `dev(MySQL)` 환경을 함께 자동 설정
+  - MySQL 데이터베이스명은 저장소 물리명을 소문자 `snake_case`로 변환해 자동 제안하며 직접 수정 가능
+  - dev 실행 전에 `DEV_DB_USERNAME`, `DEV_DB_PASSWORD` 환경변수 설정 필요 (기본값 없음)
+  - `DEV_DB_URL`은 선택사항이며, 없으면 `jdbc:mysql://localhost:3306/{데이터베이스명}?serverTimezone=Asia/Seoul` 사용
 - `main` 브랜치 푸시
 - `protect-main` Ruleset 생성
   - Active
@@ -136,7 +143,7 @@ Project 연결은 자동으로 처리되지만 `Default repository`는 자동 �
 gh auth status --active --hostname github.com
 ```
 
-조직 계정 지원, Project의 `Default repository` 자동 지정, Wiki 최초 생성 자동화, MySQL 및 Flutter 초기화는 현재 범위에 포함되지 않습니다.
+조직 계정 지원, Project의 `Default repository` 자동 지정, Wiki 최초 생성 자동화 및 Flutter 초기화는 현재 범위에 포함되지 않습니다.
 
 ## 로컬 데이터와 개인정보
 
@@ -161,3 +168,8 @@ team-project-starter/
 ```
 
 `state.json`과 `logs/`는 이 프로그램 저장소의 Git 커밋 대상에서 제외됩니다. 새로 만드는 GitHub 저장소에는 프로그램 폴더의 실행 기록이 복사되지 않습니다.
+
+## 관련 링크
+
+- [반복 작업이 귀찮아서 바이브 코딩으로 GitHub 팀 프로젝트 초기 설정을 자동화해봤다](https://heebaek.tistory.com/entry/%EB%B0%98%EB%B3%B5-%EC%9E%91%EC%97%85%EC%9D%B4-%EA%B7%80%EC%B0%AE%EC%95%84%EC%84%9C-%EB%B0%94%EC%9D%B4%EB%B8%8C-%EC%BD%94%EB%94%A9%EC%9C%BC%EB%A1%9C-GitHub-%ED%8C%80-%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8-%EC%B4%88%EA%B8%B0-%EC%84%A4%EC%A0%95%EC%9D%84-%EC%9E%90%EB%8F%99%ED%99%94%ED%95%B4%EB%B4%A4%EB%8B%A4)
+- [팀 프로젝트 초기화 도구를 Spring Boot와 Codex 프로토콜까지 확장해봤다](https://heebaek.tistory.com/entry/%ED%8C%80-%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8-%EC%B4%88%EA%B8%B0%ED%99%94-%EB%8F%84%EA%B5%AC%EB%A5%BC-Spring-Boot%EC%99%80-Codex-%ED%94%84%EB%A1%9C%ED%86%A0%EC%BD%9C%EA%B9%8C%EC%A7%80-%ED%99%95%EC%9E%A5%ED%95%B4%EB%B4%A4%EB%8B%A4)

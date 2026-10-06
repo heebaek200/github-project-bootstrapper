@@ -34,10 +34,13 @@ $script:ProgressBar = $null
 $script:SpringBootVersion = '4.1.1'
 $script:JavaVersion = '21'
 $script:DefaultGroupId = 'fullstack.teamproject'
-# 다음 수업 진도에서 GUI와 생성 로직을 연결할 기능 자리다. 구현 전에는 화면에 노출하지 않는다.
+$script:DatabaseNameManuallyEdited = $false
+$script:UpdatingDatabaseNameSuggestion = $false
+# Spring Boot 프로젝트에는 local(H2)과 dev(MySQL) 환경을 함께 준비한다.
 $script:ProjectFeatures = [ordered]@{
     SpringBoot = [ordered]@{ Visible = $true; Implemented = $true }
-    MySql = [ordered]@{ Visible = $false; Implemented = $false }
+    H2 = [ordered]@{ Visible = $true; Implemented = $true }
+    MySql = [ordered]@{ Visible = $true; Implemented = $true }
     Flutter = [ordered]@{ Visible = $false; Implemented = $false }
 }
 
@@ -442,6 +445,26 @@ function ConvertTo-JavaArtifactName {
     return $artifact
 }
 
+function ConvertTo-DatabaseName {
+    param([string]$Repository)
+
+    $databaseName = ([string]$Repository).ToLowerInvariant() -replace '[^a-z0-9]+', '_'
+    $databaseName = $databaseName.Trim([char]'_')
+    if ([string]::IsNullOrWhiteSpace($databaseName)) { $databaseName = 'application' }
+    if ($databaseName -match '^[0-9]') { $databaseName = "db_$databaseName" }
+    if ($databaseName.Length -gt 64) {
+        $databaseName = $databaseName.Substring(0, 64).TrimEnd([char]'_')
+    }
+    return $databaseName
+}
+
+function Test-DatabaseName {
+    param([string]$Name)
+    return (-not [string]::IsNullOrWhiteSpace($Name)) -and
+        ($Name.Length -le 64) -and
+        ($Name -cmatch '^[a-z][a-z0-9_]*$')
+}
+
 function Test-JavaPackageName {
     param([string]$Name)
     return (-not [string]::IsNullOrWhiteSpace($Name)) -and
@@ -456,7 +479,6 @@ function Get-SpringInitializrUri {
         [Parameter(Mandatory = $true)][string]$ProjectName
     )
 
-    # JPA와 MySQL은 후속 기능이 구현될 때 함께 추가한다.
     $parameters = [ordered]@{
         type = 'gradle-project'
         language = 'java'
@@ -471,7 +493,7 @@ function Get-SpringInitializrUri {
         packaging = 'jar'
         javaVersion = $script:JavaVersion
         configurationFileFormat = 'yaml'
-        dependencies = 'web,mustache,lombok,devtools'
+        dependencies = 'web,mustache,lombok,devtools,data-jpa,mysql,h2'
     }
     $query = @($parameters.GetEnumerator() | ForEach-Object {
         '{0}={1}' -f [uri]::EscapeDataString([string]$_.Key), [uri]::EscapeDataString([string]$_.Value)
@@ -479,10 +501,40 @@ function Get-SpringInitializrUri {
     return "https://start.spring.io/starter.zip?$query"
 }
 
+function Add-CommonsLangDependency {
+    param([Parameter(Mandatory = $true)][string]$Destination)
+
+    $buildPath = Join-Path $Destination 'build.gradle'
+    if (-not (Test-Path -LiteralPath $buildPath -PathType Leaf)) {
+        throw "Gradle 빌드 파일을 찾지 못했습니다: $buildPath"
+    }
+
+    $coordinate = 'org.apache.commons:commons-lang3'
+    # Initializr가 UTF-8로 생성한 한글 Description을 Windows PowerShell 5.1에서도
+    # 손상 없이 유지하도록 기본 코드페이지 대신 UTF-8을 명시해 읽는다.
+    $build = [System.IO.File]::ReadAllText($buildPath, $script:Utf8Encoding)
+    if ($build.Contains($coordinate)) {
+        return
+    }
+
+    $dependenciesBlock = [regex]::Match($build, '(?m)^dependencies\s*\{[^\r\n]*')
+    if (-not $dependenciesBlock.Success) {
+        throw 'build.gradle에서 dependencies 블록을 찾지 못했습니다.'
+    }
+
+    $newLine = if ($build.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $dependency = "$newLine`timplementation 'org.apache.commons:commons-lang3'"
+    $build = $build.Insert($dependenciesBlock.Index + $dependenciesBlock.Length, $dependency)
+    [System.IO.File]::WriteAllText($buildPath, $build, $script:Utf8Encoding)
+    Write-AppLog 'Apache Commons Lang 의존성을 build.gradle에 추가했습니다.' 'OK'
+}
+
 function Set-SpringProfileConfiguration {
     param(
         [Parameter(Mandatory = $true)][string]$Destination,
-        [Parameter(Mandatory = $true)][string]$Package
+        [Parameter(Mandatory = $true)][string]$Artifact,
+        [Parameter(Mandatory = $true)][string]$Package,
+        [Parameter(Mandatory = $true)][string]$DatabaseName
     )
 
     $resourcesPath = Join-Path $Destination 'src\main\resources'
@@ -491,20 +543,18 @@ function Set-SpringProfileConfiguration {
         throw "Spring 설정 파일을 찾지 못했습니다: $applicationPath"
     }
 
-    $application = Get-Content -Raw -LiteralPath $applicationPath
-    if ($application -notmatch '(?m)^spring:\s*$') {
-        throw 'application.yaml에서 spring 설정을 찾지 못했습니다.'
-    }
-    $application = $application.TrimEnd() + "`r`n  profiles:`r`n    active: dev`r`n"
+    $application = @"
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  application:
+    name: $Artifact
+  profiles:
+    active: `${SPRING_PROFILES_ACTIVE:local}
+"@
     [System.IO.File]::WriteAllText($applicationPath, $application, $script:Utf8Encoding)
 
-    $production = @"
-server:
-  port: 5000
-"@
-    [System.IO.File]::WriteAllText((Join-Path $resourcesPath 'application-prod.yaml'), $production, $script:Utf8Encoding)
-
-    $development = @"
+    $local = @"
 server:
   port: 8080
 
@@ -512,9 +562,84 @@ logging:
   level:
     root: INFO                  # 스프링과 라이브러리는 INFO 이상만 콘솔에 출력
     ${Package}: DEBUG    # 내가 작성한 코드는 DEBUG 이상까지 출력
+
+spring:
+  # 데이터베이스 연결 (H2 메모리 DB 사용)
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:localdb
+    username: sa
+    password:
+
+  # H2 콘솔 화면 켜기 (http://localhost:8080/h2-console)
+  h2:
+    console:
+      enabled: true
+
+  # JPA 설정
+  jpa:
+    hibernate:
+      # 시작할 때마다 테이블을 새로 만든다. 기존 데이터는 사라진다. (개발용)
+      ddl-auto: create
+    # 실행되는 SQL을 콘솔에 출력한다.
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true    # 출력되는 SQL을 콘솔창에 줄바꿈해 보기 좋게 표시
+        default_batch_fetch_size: 10
+    # data.sql을 테이블 생성 후에 실행한다.
+    defer-datasource-initialization: true
+"@
+    [System.IO.File]::WriteAllText((Join-Path $resourcesPath 'application-local.yaml'), $local, $script:Utf8Encoding)
+
+    $development = @"
+server:
+  port: 8080
+
+logging:
+  level:
+    root: INFO
+    ${Package}: DEBUG
+
+spring:
+  # 데이터베이스 연결 (MySQL)
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: `${DEV_DB_URL:jdbc:mysql://localhost:3306/${DatabaseName}?serverTimezone=Asia/Seoul}
+    username: `${DEV_DB_USERNAME}
+    password: `${DEV_DB_PASSWORD}
+
+  # JPA 설정
+  jpa:
+    hibernate:
+      # 개발 환경에서는 없는 테이블과 컬럼만 추가한다.
+      ddl-auto: update
+    # 실행되는 SQL을 콘솔에 출력한다.
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true    # 출력되는 SQL을 콘솔창에 줄바꿈해 보기 좋게 표시
+        default_batch_fetch_size: 10
+    # data.sql을 테이블 생성 후에 실행한다.
+    defer-datasource-initialization: true
+
+  # MySQL에서도 서버 시작 시 초기 데이터 파일을 실행한다.
+  sql:
+    init:
+      mode: always
+      data-locations:
+        - optional:classpath:db/data.sql
 "@
     [System.IO.File]::WriteAllText((Join-Path $resourcesPath 'application-dev.yaml'), $development, $script:Utf8Encoding)
-    Write-AppLog "dev 프로필과 dev/prod 환경별 설정 파일을 생성했습니다. DEBUG 로거: $Package" 'OK'
+
+    $environmentExample = @"
+SPRING_PROFILES_ACTIVE=dev
+DEV_DB_URL=jdbc:mysql://localhost:3306/${DatabaseName}?serverTimezone=Asia/Seoul
+DEV_DB_USERNAME=your_username
+DEV_DB_PASSWORD=your_password
+"@
+    [System.IO.File]::WriteAllText((Join-Path $Destination '.env.example'), $environmentExample, $script:Utf8Encoding)
+    Write-AppLog "local(H2), dev(MySQL), .env.example 설정을 생성했습니다. MySQL Database: $DatabaseName, DEBUG 로거: $Package" 'OK'
 }
 
 function Initialize-SpringBootProject {
@@ -523,7 +648,8 @@ function Initialize-SpringBootProject {
         [Parameter(Mandatory = $true)][string]$Artifact,
         [Parameter(Mandatory = $true)][string]$Group,
         [Parameter(Mandatory = $true)][string]$Package,
-        [Parameter(Mandatory = $true)][string]$ProjectName
+        [Parameter(Mandatory = $true)][string]$ProjectName,
+        [Parameter(Mandatory = $true)][string]$DatabaseName
     )
 
     $archivePath = Join-Path ([System.IO.Path]::GetTempPath()) ("team-project-starter-spring-{0}.zip" -f [guid]::NewGuid().ToString('N'))
@@ -533,13 +659,14 @@ function Initialize-SpringBootProject {
         Write-AppLog ("Spring Initializr에서 Spring Boot {0} / Java {1} 프로젝트를 내려받습니다." -f $script:SpringBootVersion, $script:JavaVersion)
         Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $archivePath
         Expand-Archive -LiteralPath $archivePath -DestinationPath $Destination -Force
-        Set-SpringProfileConfiguration -Destination $Destination -Package $Package
+        Add-CommonsLangDependency -Destination $Destination
+        Set-SpringProfileConfiguration -Destination $Destination -Artifact $Artifact -Package $Package -DatabaseName $DatabaseName
 
         $helpPath = Join-Path $Destination 'HELP.md'
         if (Test-Path -LiteralPath $helpPath -PathType Leaf) {
             Remove-Item -LiteralPath $helpPath -Force
         }
-        Write-AppLog 'Spring Web, Mustache, Lombok, DevTools 기반 프로젝트를 준비했습니다. JPA와 MySQL은 제외했습니다.' 'OK'
+        Write-AppLog 'Spring Web, Mustache, Lombok, DevTools, Data JPA, MySQL Driver, H2, Apache Commons Lang 기반 프로젝트를 준비했습니다.' 'OK'
     }
     finally {
         if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
@@ -601,7 +728,8 @@ function New-GitHubRepository {
         [bool]$InitializeSpringBoot = $false,
         [string]$SpringGroup = '',
         [string]$SpringArtifact = '',
-        [string]$SpringPackage = ''
+        [string]$SpringPackage = '',
+        [string]$DatabaseName = ''
     )
 
     if (-not (Test-RepositoryName $Repository)) {
@@ -620,6 +748,9 @@ function New-GitHubRepository {
         if (-not (Test-JavaPackageName $SpringPackage)) {
             throw 'Spring Package는 소문자 영문과 숫자로 구성된 점(.) 구분 Java 패키지명이어야 합니다.'
         }
+        if (-not (Test-DatabaseName $DatabaseName)) {
+            throw 'MySQL 데이터베이스명은 소문자 영문으로 시작하고 소문자 영문, 숫자, 밑줄만 사용하여 64자 이내로 입력해 주세요.'
+        }
     }
 
     Invoke-Preflight | Out-Null
@@ -635,7 +766,13 @@ function New-GitHubRepository {
         Set-AppStatus '로컬 기본 파일을 준비하는 중...' 20
         if ($InitializeSpringBoot) {
             Set-AppStatus 'Spring Boot 프로젝트를 내려받는 중...' 12
-            Initialize-SpringBootProject -Destination $workRoot -Artifact $SpringArtifact -Group $SpringGroup -Package $SpringPackage -ProjectName $Description
+            Initialize-SpringBootProject `
+                -Destination $workRoot `
+                -Artifact $SpringArtifact `
+                -Group $SpringGroup `
+                -Package $SpringPackage `
+                -ProjectName $Description `
+                -DatabaseName $DatabaseName
         }
         New-ProjectDocumentation -Destination $workRoot -ProjectName $Description
         # Initializr가 만든 파일보다 프로그램 폴더의 고정 템플릿을 항상 우선한다.
@@ -1233,22 +1370,30 @@ Ensure-LocalFolders
           <CheckBox Grid.Row="4" Name="SpringBootCheckBox" Content="Spring Boot 기초 프로젝트 초기화" FontWeight="SemiBold" Margin="0,0,0,10"/>
           <Border Grid.Row="5" Name="SpringMetadataPanel" Visibility="Collapsed" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,14">
             <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="1.45*"/>
               </Grid.ColumnDefinitions>
-              <StackPanel Grid.Column="0">
+              <StackPanel Grid.Row="0" Grid.Column="0">
                 <TextBlock Text="Group" FontWeight="SemiBold" Margin="0,0,0,5"/>
                 <TextBox Name="SpringGroupBox" Height="34" Padding="8,5"/>
               </StackPanel>
-              <StackPanel Grid.Column="2">
+              <StackPanel Grid.Row="0" Grid.Column="2">
                 <TextBlock Text="Artifact" FontWeight="SemiBold" Margin="0,0,0,5"/>
                 <TextBox Name="SpringArtifactBox" Height="34" Padding="8,5"/>
               </StackPanel>
-              <StackPanel Grid.Column="4">
+              <StackPanel Grid.Row="0" Grid.Column="4">
                 <TextBlock Text="Package" FontWeight="SemiBold" Margin="0,0,0,5"/>
                 <TextBox Name="SpringPackageBox" Height="34" Padding="8,5"/>
+              </StackPanel>
+              <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5" Name="DatabaseNamePanel" Visibility="Collapsed" Margin="0,14,0,0">
+                <TextBlock Text="MySQL 데이터베이스명" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox Name="DatabaseNameBox" Height="34" Padding="8,5"/>
               </StackPanel>
             </Grid>
           </Border>
@@ -1257,7 +1402,7 @@ Ensure-LocalFolders
             <Button Name="OpenRepositoryButton" Content="저장소 열기" Width="125" Height="42" MinHeight="42" Margin="10,0,0,0" FontWeight="SemiBold"/>
           </StackPanel>
           <Border Grid.Row="7" Background="#FFF8C5" BorderBrush="#D4A72C" BorderThickness="1" CornerRadius="6" Padding="12">
-            <TextBlock TextWrapping="Wrap" Text="Public 저장소에 고정 .gitignore, README, 설계 문서를 푸시합니다. Spring Boot 선택 시 Gradle Groovy · Java 21 · Boot 4.1.1과 Web · Mustache · Lombok · DevTools를 포함합니다. 이후 Ruleset과 Pages를 설정합니다." Foreground="#633C01"/>
+            <TextBlock TextWrapping="Wrap" Text="Spring Boot 선택 시 Web · Mustache · Lombok · DevTools · Data JPA · MySQL Driver · H2 · Apache Commons Lang을 포함하고 local(H2) 및 dev(MySQL) 환경을 자동 설정합니다. 이후 Ruleset과 Pages를 설정합니다." Foreground="#633C01"/>
           </Border>
         </Grid>
         </ScrollViewer>
@@ -1317,6 +1462,8 @@ $springMetadataPanel = $window.FindName('SpringMetadataPanel')
 $springGroupBox = $window.FindName('SpringGroupBox')
 $springArtifactBox = $window.FindName('SpringArtifactBox')
 $springPackageBox = $window.FindName('SpringPackageBox')
+$databaseNamePanel = $window.FindName('DatabaseNamePanel')
+$databaseNameBox = $window.FindName('DatabaseNameBox')
 $targetRepositoryBox = $window.FindName('TargetRepositoryBox')
 $projectTitleBox = $window.FindName('ProjectTitleBox')
 $membersBox = $window.FindName('MembersBox')
@@ -1339,6 +1486,12 @@ Set-Placeholder -TextBox $membersBox -Placeholder "선택사항 — 한 줄에 �
 $springGroupBox.Text = $script:DefaultGroupId
 $springArtifactBox.Text = 'application'
 $springPackageBox.Text = "$($script:DefaultGroupId).application"
+$databaseNameBox.Text = 'application'
+$databaseNamePanel.Visibility = if ([bool]$script:ProjectFeatures.MySql.Visible) {
+    [System.Windows.Visibility]::Visible
+} else {
+    [System.Windows.Visibility]::Collapsed
+}
 
 $springBootCheckBox.Add_Checked({
     $springMetadataPanel.Visibility = [System.Windows.Visibility]::Visible
@@ -1346,12 +1499,26 @@ $springBootCheckBox.Add_Checked({
 $springBootCheckBox.Add_Unchecked({
     $springMetadataPanel.Visibility = [System.Windows.Visibility]::Collapsed
 })
+$databaseNameBox.Add_TextChanged({
+    if (-not $script:UpdatingDatabaseNameSuggestion) {
+        $script:DatabaseNameManuallyEdited = $true
+    }
+})
 $repositoryNameBox.Add_TextChanged({
     $repository = Get-InputText $repositoryNameBox
     if ([string]::IsNullOrWhiteSpace($repository)) { return }
     $artifact = ConvertTo-JavaArtifactName $repository
     $springArtifactBox.Text = $artifact
     $springPackageBox.Text = "$($springGroupBox.Text.Trim()).$artifact"
+    if ((-not $script:DatabaseNameManuallyEdited) -or [string]::IsNullOrWhiteSpace($databaseNameBox.Text)) {
+        $script:UpdatingDatabaseNameSuggestion = $true
+        try {
+            $databaseNameBox.Text = ConvertTo-DatabaseName $repository
+        }
+        finally {
+            $script:UpdatingDatabaseNameSuggestion = $false
+        }
+    }
 })
 $springGroupBox.Add_TextChanged({
     if (($null -eq $springArtifactBox) -or ($null -eq $springPackageBox)) { return }
@@ -1389,7 +1556,7 @@ $createRepositoryButton.Add_Click({
         $description = Get-InputText $descriptionBox
         $initializeSpringBoot = [bool]$springBootCheckBox.IsChecked
         $springSummary = if ($initializeSpringBoot) {
-            "사용 — Group: $($springGroupBox.Text.Trim()), Artifact: $($springArtifactBox.Text.Trim()), Package: $($springPackageBox.Text.Trim())"
+            "사용 — Group: $($springGroupBox.Text.Trim()), Artifact: $($springArtifactBox.Text.Trim()), Package: $($springPackageBox.Text.Trim())`nDatabase: local(H2) / localdb, dev(MySQL) / $($databaseNameBox.Text.Trim())"
         } else { '사용 안 함' }
         $message = @"
 다음 Public 저장소를 생성하시겠습니까?
@@ -1409,7 +1576,8 @@ main 보호 Ruleset과 공개 GitHub Pages도 함께 생성됩니다.
             -InitializeSpringBoot $initializeSpringBoot `
             -SpringGroup $springGroupBox.Text.Trim() `
             -SpringArtifact $springArtifactBox.Text.Trim() `
-            -SpringPackage $springPackageBox.Text.Trim()
+            -SpringPackage $springPackageBox.Text.Trim() `
+            -DatabaseName $databaseNameBox.Text.Trim()
         $targetRepositoryBox.Text = $repository
         $targetRepositoryBox.Foreground = [System.Windows.Media.Brushes]::Black
         $accountText.Text = "GitHub 계정: $($script:Owner) · 최근 저장소: $repository"
