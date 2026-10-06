@@ -2,6 +2,70 @@
 
 Windows에서 GitHub 팀 프로젝트의 초기 구성을 GUI로 자동화하는 도구입니다.
 
+## 보안 및 신뢰 안내
+
+이 프로그램은 PowerShell과 WPF로 작성된 오픈소스 GUI 도구입니다. 실행 코드 전체는 [`TeamProjectStarter.ps1`](TeamProjectStarter.ps1)과 [`팀프로젝트-시작.vbs`](팀프로젝트-시작.vbs)에서 확인할 수 있으며, 코드를 난독화하거나 외부 PowerShell 스크립트를 내려받아 실행하지 않습니다.
+
+현재 PowerShell 스크립트에는 Authenticode 디지털 서명이 없습니다. 출처를 확인할 수 없는 복사본이나 재배포 파일 대신 이 GitHub 저장소에서 직접 Clone하거나 내려받은 소스를 사용하세요.
+
+### PowerShell 실행 옵션
+
+`팀프로젝트-시작.vbs`는 다음 명령으로 GUI를 실행합니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File .\TeamProjectStarter.ps1
+```
+
+| 옵션 | 사용 이유 |
+|---|---|
+| `-NoProfile` | 사용자의 PowerShell 프로필을 불러오지 않고 동일한 환경에서 실행합니다. |
+| `-ExecutionPolicy Bypass` | 현재 PowerShell 프로세스에서만 로컬 스크립트 실행을 허용합니다. 시스템이나 사용자 계정의 실행 정책을 영구 변경하지 않습니다. |
+| `-STA` | WPF GUI 실행에 필요한 스레드 모드를 사용합니다. |
+| `-WindowStyle Hidden` | GUI 뒤에 별도 PowerShell 창이 남지 않게 합니다. |
+
+숨김 실행이 불편하면 PowerShell에서 다음 명령을 직접 실행하여 콘솔 출력과 오류를 확인할 수 있습니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\TeamProjectStarter.ps1
+```
+
+### 권한과 외부 통신
+
+프로그램은 관리자 권한이나 UAC 승격을 요청하지 않습니다. GitHub 작업은 사용자가 직접 설치하고 로그인한 GitHub CLI(`gh`)를 통해 수행합니다.
+
+| 대상 | 목적 |
+|---|---|
+| `github.com` 및 GitHub API | 저장소, Wiki, Ruleset, Pages, Project, 라벨과 조원 권한을 생성·설정합니다. |
+| `start.spring.io` | 사용자가 Spring Boot 초기화를 선택했을 때 프로젝트 ZIP을 생성하고 내려받습니다. |
+
+GitHub CLI에는 다음 권한이 필요합니다.
+
+- `repo`: 저장소, Wiki, Ruleset, Pages, 라벨과 조원 권한 설정
+- `project`: 사용자 소유 GitHub Project와 필드·보기·조원 설정
+
+프로그램은 GitHub 인증 토큰을 직접 읽거나 별도 파일에 저장하지 않습니다. 비밀번호, API 키, MySQL 접속 정보 또는 사용량 분석 정보를 수집하거나 외부로 전송하지 않습니다.
+
+### 변경 및 삭제되는 범위
+
+프로그램은 사용자가 입력한 저장소와 Project만 대상으로 작업하지만, 2단계 실행 시 다음 기존 설정을 삭제하거나 교체할 수 있습니다.
+
+- Wiki Home을 포함한 동일 이름의 Wiki 문서
+- 저장소 라벨
+- Project 보기와 Status 선택지
+- Project에 연결된 저장소
+
+이미 사용 중인 저장소나 Project에는 바로 실행하지 말고 비어 있는 테스트 저장소에서 먼저 확인하세요. 로컬에서는 프로그램 폴더의 `logs/`, `state.json`과 작업용 Windows 임시 폴더만 사용하며, 레지스트리, Windows 서비스, 예약 작업, 시작 프로그램과 백신 설정을 변경하지 않습니다.
+
+### 실행 전 소스 확인
+
+외부 통신, GitHub 명령과 파일 삭제 관련 코드를 빠르게 확인하려면 다음 명령을 사용할 수 있습니다.
+
+```powershell
+Select-String `
+  -Path .\TeamProjectStarter.ps1 `
+  -Pattern 'Invoke-WebRequest|Invoke-Gh|Invoke-Git|Remove-Item|Start-Process'
+```
+
 ## 지원 환경과 조건
 
 - Windows 10 또는 Windows 11
