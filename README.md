@@ -35,12 +35,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\TeamProjectStarte
 
 | 대상 | 목적 |
 |---|---|
-| `github.com` 및 GitHub API | 저장소, Wiki, Ruleset, Pages, Project, 라벨과 조원 권한을 생성·설정합니다. |
+| `github.com` 및 GitHub API | 저장소, Wiki, Ruleset, Pages, Project, Discussions, 라벨과 조원 권한을 생성·설정합니다. |
 | `start.spring.io` | 사용자가 Spring Boot 초기화를 선택했을 때 프로젝트 ZIP을 생성하고 내려받습니다. |
 
 GitHub CLI에는 다음 권한이 필요합니다.
 
-- `repo`: 저장소, Wiki, Ruleset, Pages, 라벨과 조원 권한 설정
+- `repo`: 저장소, Wiki, Ruleset, Pages, Discussions, 라벨과 조원 권한 설정
 - `project`: 사용자 소유 GitHub Project와 필드·보기·조원 설정
 
 프로그램은 GitHub 인증 토큰을 직접 읽거나 별도 파일에 저장하지 않습니다. 비밀번호, API 키, MySQL 접속 정보 또는 사용량 분석 정보를 수집하거나 외부로 전송하지 않습니다.
@@ -53,6 +53,8 @@ GitHub CLI에는 다음 권한이 필요합니다.
 - 저장소 라벨
 - Project 보기와 Status 선택지
 - Project에 연결된 저장소
+- Private 대상 저장소의 Public 전환
+- GitHub Discussions 활성화
 
 이미 사용 중인 저장소나 Project에는 바로 실행하지 말고 비어 있는 테스트 저장소에서 먼저 확인하세요. 로컬에서는 프로그램 폴더의 `logs/`, `state.json`과 작업용 Windows 임시 폴더만 사용하며, 레지스트리, Windows 서비스, 예약 작업, 시작 프로그램과 백신 설정을 변경하지 않습니다.
 
@@ -113,7 +115,7 @@ gh auth setup-git
    ![저장소 만들기 화면](docs/images/Screenshot_1.png)
 
 5. 생성된 GitHub 저장소의 Wiki에서 `Home` 페이지를 한 번 수동 생성합니다.
-6. **2. Wiki · Project 구성**에서 대상 저장소명, Project 논리명과 선택적인 조원 계정을 입력해 팀 환경을 구성합니다.
+6. **2. Wiki · Project · Discussions 구성**에서 대상 저장소명, Project 논리명과 선택적인 조원 계정을 입력해 팀 환경을 구성합니다.
 
    ![Wiki 및 Project 구성 화면](docs/images/Screenshot_2.png)
 
@@ -158,10 +160,13 @@ gh auth setup-git
   - Force push 차단
 - GitHub Pages를 `main` 브랜치의 `/docs`로 설정
 
-생성되는 `README.md`는 `docs/index.md`만 연결하고, 문서 목차에서 다음 설계 문서로 이동하는 2단계 구조를 사용합니다.
+생성되는 `README.md`는 설계 문서, 저장소의 GitHub Projects, Discussions와 일일 리포트 게시글 템플릿을 연결합니다. 설계 문서 링크는 `docs/index.md`를 거쳐 다음 문서로 이동하는 2단계 구조를 사용합니다.
 
 ```text
 README.md
+├─ 저장소 GitHub Projects
+├─ Discussions
+├─ docs/daily-report-template.md
 └─ docs/index.md
    ├─ requirements.md
    ├─ business-rules.md
@@ -175,10 +180,12 @@ README.md
 
 1단계가 끝나면 GitHub 저장소의 Wiki에서 임시 `Home` 페이지를 한 번 수동 생성해야 합니다. 이 과정이 없으면 Wiki Git 저장소가 만들어지지 않아 2단계를 진행할 수 없습니다.
 
-## 2단계: Wiki · Project 구성
+## 2단계: Wiki · Project · Discussions 구성
 
 다음을 자동으로 수행합니다.
 
+- 대상 저장소가 Private이면 Public으로 전환
+- GitHub Discussions 활성화
 - `wiki` 폴더 최상위의 모든 Markdown 파일과 `wiki/images` 이미지를 Wiki에 푸시 (`Home.md` 포함, Markdown 1개 이상)
 - 수동 초기화용 Home을 템플릿 `Home.md`로 교체
 - Public GitHub Project 생성 또는 동일 제목의 기존 Project 재사용
@@ -195,7 +202,9 @@ README.md
 
 Project 연결은 자동으로 처리되지만 `Default repository`는 자동 지정하지 않습니다. `Project 설정` 버튼은 마지막으로 구성한 Project의 Settings 페이지를 열어 줍니다. 여기에서 `Default repository`를 대상 저장소 물리명으로 직접 선택합니다.
 
-2단계는 대상 저장소의 기존 라벨과 Project의 기존 보기 및 Status 선택지를 지정된 구성으로 교체합니다. 이미 사용 중인 저장소나 Project에 실행할 때는 기존 설정이 삭제될 수 있으므로 먼저 내용을 확인하세요.
+2단계는 같은 입력으로 다시 실행할 수 있습니다. 같은 제목의 기존 Project를 재사용하고, Wiki는 변경된 내용만 푸시하며, 저장소 공개 상태와 Discussions 활성 상태는 필요한 경우에만 변경합니다. 라벨, Project 보기, Status 선택지와 연결 저장소는 실행할 때마다 지정된 구성으로 다시 맞추므로 기존 사용자 설정이 삭제될 수 있습니다.
+
+Discussions 카테고리와 일일 게시글은 자동으로 만들지 않습니다. Wiki의 `일일 리포트` 문서를 따라 기본 카테고리를 정리하고 `일일 리포트` 카테고리와 첫 게시글을 준비합니다. 게시글 본문은 생성된 저장소 README의 `일일 리포트 게시글 템플릿` 링크에서 복사할 수 있습니다.
 
 ## 다른 계정과 컴퓨터에서 사용
 
@@ -225,6 +234,7 @@ team-project-starter/
 ├─ 팀프로젝트-시작.vbs       GUI 실행 파일
 ├─ TeamProjectStarter.ps1    프로그램 본체
 ├─ .gitignore                새 저장소용 고정 템플릿
+├─ templates/                새 저장소에 복사할 일일 리포트 템플릿
 ├─ wiki/                     Wiki 템플릿(최상위 Markdown 파일과 images 폴더)
 ├─ docs/images/              README 실행 화면 이미지
 ├─ logs/                     날짜별 실행 로그(실행 후 생성, Git 제외)

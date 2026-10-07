@@ -10,6 +10,9 @@
 - [[GitHub Projects 도입]]  
   프로젝트 관리 도구의 필요성, GitHub Projects를 선택한 이유와 Issue 작성 및 관리 방법을 설명합니다.
 
+- [[일일 리포트]]  
+  Discussions를 준비하고 매일 작업 기록을 남기는 절차를 설명합니다.
+
 - [[작업 순서]]  
   Issue 확인부터 사전 조율, 브랜치 생성, 개발과 테스트, Pull Request, 소스 리뷰, Merge 및 작업 종료까지의 순서를 설명합니다.
 

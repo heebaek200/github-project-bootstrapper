@@ -20,6 +20,7 @@ Add-Type -AssemblyName WindowsBase
 
 $script:AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:WikiTemplatePath = Join-Path $script:AppRoot 'wiki'
+$script:DailyReportTemplatePath = Join-Path $script:AppRoot 'templates\daily-report.md'
 $script:GitIgnorePath = Join-Path $script:AppRoot '.gitignore'
 $script:LogsPath = Join-Path $script:AppRoot 'logs'
 $script:StatePath = Join-Path $script:AppRoot 'state.json'
@@ -345,7 +346,10 @@ function Invoke-Preflight {
     if (-not (Test-Path -LiteralPath (Join-Path $script:WikiTemplatePath 'Home.md') -PathType Leaf)) {
         throw 'wiki\Home.md가 없습니다.'
     }
-    Write-AppLog ("고정 .gitignore와 Wiki Markdown 템플릿 {0}개를 확인했습니다." -f $wikiFiles.Count) 'OK'
+    if (-not (Test-Path -LiteralPath $script:DailyReportTemplatePath -PathType Leaf)) {
+        throw "일일 리포트 템플릿이 없습니다: $($script:DailyReportTemplatePath)"
+    }
+    Write-AppLog ("고정 .gitignore, 일일 리포트 템플릿과 Wiki Markdown 템플릿 {0}개를 확인했습니다." -f $wikiFiles.Count) 'OK'
 
     Set-AppStatus ("준비 완료 — {0}" -f $script:Owner) 100
     return $true
@@ -544,6 +548,11 @@ function Set-SpringProfileConfiguration {
     }
 
     $application = @"
+server:
+  servlet:
+    session:
+      tracking-modes: cookie    # 세션 번호를 쿠키로만 전달 (주소에 ;jsessionid를 붙이지 않음)
+
 spring:
   config:
     import: optional:file:.env[.properties]
@@ -551,6 +560,9 @@ spring:
     name: $Artifact
   profiles:
     active: `${SPRING_PROFILES_ACTIVE:local}
+  mustache:
+    servlet:
+      expose-session-attributes: true   # Mustache 파일에서 세션값 사용
 "@
     [System.IO.File]::WriteAllText($applicationPath, $application, $script:Utf8Encoding)
 
@@ -675,10 +687,14 @@ function Initialize-SpringBootProject {
     }
 }
 
+# 새 저장소에서 바로 사용할 설계 문서와 협업 링크를 생성한다.
+# 저장소 생성 전에 확정된 소유자와 저장소명을 사용하여 저장소 Projects와
+# Discussions 주소를 만들고, 일일 리포트 템플릿도 문서에 포함한다.
 function New-ProjectDocumentation {
     param(
         [Parameter(Mandatory = $true)][string]$Destination,
-        [Parameter(Mandatory = $true)][string]$ProjectName
+        [Parameter(Mandatory = $true)][string]$ProjectName,
+        [string]$Repository = 'REPOSITORY'
     )
 
     $docsPath = Join-Path $Destination 'docs'
@@ -716,9 +732,23 @@ function New-ProjectDocumentation {
     )
     [System.IO.File]::WriteAllLines((Join-Path $docsPath 'index.md'), $indexLines, $script:Utf8Encoding)
 
-    $readme = "# $ProjectName`r`n`r`n[프로젝트 설계 문서 보기](docs/index.md)`r`n"
-    [System.IO.File]::WriteAllText((Join-Path $Destination 'README.md'), $readme, $script:Utf8Encoding)
-    Write-AppLog 'README와 설계 문서 6개 및 문서 목차를 준비했습니다.' 'OK'
+    # 원본 템플릿은 시작 도구에 보관하고, 생성되는 프로젝트에는 README에서
+    # 접근할 수 있는 문서 파일로 복사하여 팀원 모두가 같은 양식을 사용한다.
+    Copy-Item -LiteralPath $script:DailyReportTemplatePath -Destination (Join-Path $docsPath 'daily-report-template.md') -Force
+
+    $repositoryOwner = if ([string]::IsNullOrWhiteSpace($script:Owner)) { 'OWNER' } else { $script:Owner }
+    $repositoryUrl = "https://github.com/$repositoryOwner/$Repository"
+    $readmeLines = @(
+        "# $ProjectName",
+        '',
+        '- [프로젝트 설계 문서 보기](docs/index.md)',
+        "- [GitHub Projects 보기]($repositoryUrl/projects)",
+        "- [팀 프로젝트 일일 리포트 보기]($repositoryUrl/discussions)",
+        '- [일일 리포트 게시글 템플릿](docs/daily-report-template.md)',
+        ''
+    )
+    [System.IO.File]::WriteAllLines((Join-Path $Destination 'README.md'), $readmeLines, $script:Utf8Encoding)
+    Write-AppLog 'README, 일일 리포트 템플릿, 설계 문서 6개와 문서 목차를 준비했습니다.' 'OK'
 }
 
 function New-GitHubRepository {
@@ -774,7 +804,7 @@ function New-GitHubRepository {
                 -ProjectName $Description `
                 -DatabaseName $DatabaseName
         }
-        New-ProjectDocumentation -Destination $workRoot -ProjectName $Description
+        New-ProjectDocumentation -Destination $workRoot -ProjectName $Description -Repository $Repository
         # Initializr가 만든 파일보다 프로그램 폴더의 고정 템플릿을 항상 우선한다.
         Copy-Item -LiteralPath $script:GitIgnorePath -Destination (Join-Path $workRoot '.gitignore')
 
@@ -1205,6 +1235,55 @@ function Parse-Members {
     return @($items | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -Unique)
 }
 
+# 2단계 대상 저장소가 채용 담당자에게 공개될 수 있도록 Public 상태를 보장하고
+# Discussions 기능을 활성화한다. 이미 원하는 상태라면 변경 명령을 생략하므로
+# 같은 저장소에 2단계를 다시 실행해도 기능 설정이 중복되거나 누적되지 않는다.
+function Initialize-RepositoryDiscussions {
+    param([string]$Repository)
+
+    $fullName = "$($script:Owner)/$Repository"
+    $repoResult = Invoke-Gh -Arguments @(
+        'repo', 'view', $fullName,
+        '--json', 'url,visibility,hasDiscussionsEnabled'
+    ) -Quiet
+    $repo = ConvertFrom-JsonSafe -Text $repoResult.Output -Context '저장소 공개 상태와 Discussions 확인'
+
+    # 1단계에서 만든 저장소는 이미 Public이지만, 기존 저장소를 2단계에
+    # 입력한 경우에도 동일한 최종 상태가 되도록 필요한 때만 공개 전환한다.
+    if ([string]$repo.visibility -ne 'PUBLIC') {
+        Invoke-Gh -Arguments @(
+            'repo', 'edit', $fullName,
+            '--visibility', 'public',
+            '--accept-visibility-change-consequences'
+        ) | Out-Null
+        Write-AppLog "저장소를 Public으로 전환했습니다: $fullName" 'OK'
+    }
+    else {
+        Write-AppLog "저장소가 이미 Public입니다: $fullName" 'INFO'
+    }
+
+    # Discussions가 이미 열려 있으면 그대로 사용하고, 비활성 상태일 때만
+    # 저장소 설정을 변경한다. 카테고리와 게시글은 Wiki 절차에 따라 준비한다.
+    if (-not [bool]$repo.hasDiscussionsEnabled) {
+        Invoke-Gh -Arguments @('repo', 'edit', $fullName, '--enable-discussions') | Out-Null
+        Write-AppLog 'GitHub Discussions를 활성화했습니다.' 'OK'
+    }
+    else {
+        Write-AppLog 'GitHub Discussions가 이미 활성화되어 있습니다.' 'INFO'
+    }
+
+    $verifyResult = Invoke-Gh -Arguments @(
+        'repo', 'view', $fullName,
+        '--json', 'url,visibility,hasDiscussionsEnabled'
+    ) -Quiet
+    $verified = ConvertFrom-JsonSafe -Text $verifyResult.Output -Context '저장소 공개 상태와 Discussions 검증'
+    if (([string]$verified.visibility -ne 'PUBLIC') -or (-not [bool]$verified.hasDiscussionsEnabled)) {
+        throw '저장소를 Public 및 Discussions 활성 상태로 준비하지 못했습니다.'
+    }
+
+    return "$([string]$verified.url)/discussions"
+}
+
 function Configure-TeamProject {
     param([string]$Repository, [string]$ProjectTitle, [string[]]$Members)
 
@@ -1216,10 +1295,13 @@ function Configure-TeamProject {
     $repoCheck = Invoke-Gh -Arguments @('repo', 'view', $fullName, '--json', 'url') -AllowFailure -Quiet
     if ($repoCheck.ExitCode -ne 0) { throw "대상 저장소를 찾지 못했습니다: $fullName" }
 
-    Set-AppStatus 'Wiki 템플릿을 푸시하는 중...' 12
+    Set-AppStatus '저장소 공개 상태와 Discussions를 확인하는 중...' 8
+    $discussionsUrl = Initialize-RepositoryDiscussions -Repository $Repository
+
+    Set-AppStatus 'Wiki 템플릿을 푸시하는 중...' 18
     Sync-WikiTemplates -Repository $Repository
 
-    Set-AppStatus 'GitHub Project를 준비하는 중...' 28
+    Set-AppStatus 'GitHub Project를 준비하는 중...' 32
     $project = Get-OrCreateProject -Title $ProjectTitle
     $projectNumber = [int]$project.number
     $projectNodeId = [string]$project.id
@@ -1228,14 +1310,14 @@ function Configure-TeamProject {
     Set-ProjectRepositoryLink -ProjectNumber $projectNumber -ProjectNodeId $projectNodeId -Repository $Repository
     Write-AppLog 'Project를 Public으로 설정하고 현재 저장소를 연결했습니다.' 'OK'
 
-    Set-AppStatus '필드와 라벨을 정리하는 중...' 46
+    Set-AppStatus '필드와 라벨을 정리하는 중...' 50
     $fields = @(Get-ProjectFields -ProjectNumber $projectNumber)
     Set-ProjectStatusOptions -Fields $fields
     Ensure-DateField -ProjectNumber $projectNumber -Fields $fields -Name '시작일'
     Ensure-DateField -ProjectNumber $projectNumber -Fields $fields -Name '완료(예정)일'
     Sync-RepositoryLabels -Repository $Repository
 
-    Set-AppStatus 'Project 보기를 구성하는 중...' 68
+    Set-AppStatus 'Project 보기를 구성하는 중...' 70
     $fields = @(Get-ProjectFields -ProjectNumber $projectNumber)
     Reset-ProjectViews -ProjectNumber $projectNumber -ProjectNodeId $projectNodeId -Fields $fields
 
@@ -1269,6 +1351,7 @@ function Configure-TeamProject {
         RepositoryUrl = "https://github.com/$fullName"
         WikiUrl = "https://github.com/$fullName/wiki"
         ProjectUrl = $projectUrl
+        DiscussionsUrl = $discussionsUrl
     }
 }
 
@@ -1343,7 +1426,7 @@ Ensure-LocalFolders
 
     <StackPanel Grid.Row="0" Margin="0,0,0,18">
       <TextBlock Text="팀 프로젝트 시작 도구" FontSize="28" FontWeight="Bold" Foreground="#24292F"/>
-      <TextBlock Text="저장소 생성과 Wiki · GitHub Projects 초기 설정을 순서대로 진행합니다." FontSize="14" Foreground="#57606A" Margin="0,5,0,0"/>
+      <TextBlock Text="저장소 생성과 Wiki · GitHub Projects · Discussions 초기 설정을 순서대로 진행합니다." FontSize="14" Foreground="#57606A" Margin="0,5,0,0"/>
     </StackPanel>
 
     <Border Grid.Row="1" Background="White" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,14">
@@ -1408,30 +1491,36 @@ Ensure-LocalFolders
         </ScrollViewer>
       </TabItem>
 
-      <TabItem Header="2. Wiki · Project 구성">
+      <TabItem Header="2. Wiki · Project · Discussions 구성">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <Grid Margin="24">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
-          <TextBlock Grid.Row="0" Text="대상 저장소명" FontWeight="SemiBold" Margin="0,0,0,6"/>
-          <TextBox Grid.Row="1" Name="TargetRepositoryBox" Height="36" FontSize="14" Padding="10,6" Margin="0,0,0,13"/>
-          <TextBlock Grid.Row="2" Text="Projects 논리명" FontWeight="SemiBold" Margin="0,0,0,6"/>
-          <TextBox Grid.Row="3" Name="ProjectTitleBox" Height="36" FontSize="14" Padding="10,6" Margin="0,0,0,13"/>
-          <TextBlock Grid.Row="4" Text="조원 GitHub 사용자명 · 선택사항" FontWeight="SemiBold" Margin="0,0,0,6"/>
-          <TextBox Grid.Row="5" Name="MembersBox" Height="70" FontSize="14" Padding="10,7" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,0,13"/>
-          <StackPanel Grid.Row="6" Orientation="Horizontal" Margin="0,0,0,14">
+          <Border Grid.Row="0" Background="#FFF8C5" BorderBrush="#D4A72C" BorderThickness="2" CornerRadius="6" Padding="14" Margin="0,0,0,16">
+            <TextBlock TextWrapping="Wrap" FontSize="16" FontWeight="Bold" Foreground="#633C01" Text="2단계 실행 전 필수: 대상 저장소의 Wiki를 열어 임시 Home 문서를 한 번 생성하세요. Wiki가 초기화되지 않으면 2단계를 실행할 수 없습니다."/>
+          </Border>
+          <TextBlock Grid.Row="1" Text="대상 저장소명" FontWeight="SemiBold" Margin="0,0,0,6"/>
+          <TextBox Grid.Row="2" Name="TargetRepositoryBox" Height="36" FontSize="14" Padding="10,6" Margin="0,0,0,13"/>
+          <TextBlock Grid.Row="3" Text="Projects 논리명" FontWeight="SemiBold" Margin="0,0,0,6"/>
+          <TextBox Grid.Row="4" Name="ProjectTitleBox" Height="36" FontSize="14" Padding="10,6" Margin="0,0,0,13"/>
+          <TextBlock Grid.Row="5" Text="조원 GitHub 사용자명 · 선택사항" FontWeight="SemiBold" Margin="0,0,0,6"/>
+          <TextBox Grid.Row="6" Name="MembersBox" Height="70" FontSize="14" Padding="10,7" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,0,13"/>
+          <StackPanel Grid.Row="7" Orientation="Horizontal" Margin="0,0,0,14">
             <Button Name="ConfigureButton" Content="팀 환경 구성" Width="145" Height="42" MinHeight="42" Background="#1F883D" Foreground="White" FontWeight="SemiBold" BorderThickness="0"/>
             <Button Name="OpenWikiButton" Content="Wiki 열기" Width="110" Height="42" MinHeight="42" Margin="10,0,0,0" FontWeight="SemiBold"/>
             <Button Name="OpenProjectButton" Content="Project 열기" Width="115" Height="42" MinHeight="42" Margin="10,0,0,0" FontWeight="SemiBold"/>
             <Button Name="OpenProjectSettingsButton" Content="Project 설정" Width="125" Height="42" MinHeight="42" Margin="10,0,0,0" FontWeight="SemiBold"/>
           </StackPanel>
-          <Border Grid.Row="7" Background="#FFEBE9" BorderBrush="#FF8182" BorderThickness="1" CornerRadius="6" Padding="10">
-            <TextBlock TextWrapping="Wrap" Text="실행하면 Wiki의 초기화용 Home을 템플릿 Home으로 교체하고, 저장소 라벨과 Project 기본 보기를 삭제·재구성합니다. Project에는 현재 저장소만 연결하며, 조원 입력이 비어 있으면 초대는 건너뜁니다." Foreground="#82071E"/>
+          <Border Grid.Row="8" Background="#FFEBE9" BorderBrush="#FF8182" BorderThickness="1" CornerRadius="6" Padding="10">
+            <TextBlock TextWrapping="Wrap" Text="2단계는 같은 입력으로 다시 실행할 수 있습니다. 기존 Project는 재사용하고 Wiki는 변경된 내용만 반영하며, 라벨·Project 보기·연결 저장소는 지정된 구성으로 다시 맞춥니다. 이 과정에서 기존 사용자 설정이 삭제될 수 있습니다. 저장소는 Public으로 전환하고 Discussions를 활성화합니다." Foreground="#82071E"/>
           </Border>
         </Grid>
+        </ScrollViewer>
       </TabItem>
     </TabControl>
 
@@ -1599,11 +1688,14 @@ Project: $title
 조원: $memberText
 
 주의:
+• 2단계는 같은 입력으로 다시 실행할 수 있으며 기존 Project를 재사용합니다.
 • Wiki Home을 템플릿으로 교체합니다.
 • 저장소 라벨은 설계 / 기능구현 / 테스트만 남깁니다.
 • Project 보기는 작업 보드 / 작업 목록 / 프로젝트 일정만 남깁니다.
 • Project에는 현재 입력한 저장소만 연결합니다.
 • Default repository는 Project 설정에서 수동으로 지정합니다.
+• Private 저장소는 Public으로 전환하고 Discussions를 활성화합니다.
+• Discussions 카테고리와 일일 게시글은 Wiki 안내에 따라 수동으로 준비합니다.
 "@
         $answer = [System.Windows.MessageBox]::Show($message, '팀 환경 구성 확인', [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Warning)
         if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
