@@ -80,6 +80,17 @@ Select-String `
   - Organization 소유 저장소와 Project는 지원하지 않습니다.
 - Public 저장소, GitHub Projects, Rulesets 및 GitHub Pages를 생성·수정할 수 있는 계정 권한
 
+### Git과 GitHub CLI 설치
+
+Git과 GitHub CLI가 설치되어 있지 않다면 Windows PowerShell에서 다음 명령을 실행합니다.
+
+```powershell
+winget install --id Git.Git -e --source winget
+winget install --id GitHub.cli -e --source winget
+```
+
+설치 후에는 PATH 변경사항이 적용되도록 열려 있던 PowerShell과 Windows Terminal을 닫고 새 창을 엽니다.
+
 프로그램은 실행할 때 `gh`에 로그인된 활성 계정을 조회합니다. 사용자명, 사용자 ID 및 인증 토큰은 소스 코드에 고정되어 있지 않습니다.
 
 ## 최초 준비
