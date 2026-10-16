@@ -71,6 +71,9 @@ local.properties
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
 # Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
 
+# Gradle 설정으로 다시 생성할 수 있는 프로젝트별 IntelliJ 설정은 공유하지 않습니다.
+/.idea/
+
 # User-specific stuff
 .idea/.gitignore
 .idea/**/workspace.xml

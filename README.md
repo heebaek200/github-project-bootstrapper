@@ -126,7 +126,7 @@ gh auth setup-git
 다음을 자동으로 수행합니다.
 
 - Public 저장소 생성
-- 고정 `.gitignore`, `README.md`, `docs/index.md`와 설계 문서 6개 커밋
+- 고정 `.gitignore`, `README.md`, `docs/index.md`와 설계 문서 7개 커밋
 - 선택 시 Spring Initializr 기반 기초 프로젝트 생성
   - Project: Gradle - Groovy
   - Language: Java
@@ -137,8 +137,9 @@ gh auth setup-git
   - Dependencies: Spring Web, Mustache, Lombok, Spring Boot DevTools, Spring Data JPA, MySQL Driver, H2 Database, Apache Commons Lang
   - Apache Commons Lang은 Spring Boot가 관리하는 버전을 사용하므로 `build.gradle`에 별도 버전 없이 추가
   - `application.yaml`: `.env` 선택적 불러오기, 실제 Artifact를 애플리케이션명으로 사용, `SPRING_PROFILES_ACTIVE` 우선 적용 후 기본 프로필 `local`
-  - `application-local.yaml`: 포트 8080, `jdbc:h2:mem:localdb`, H2 Console, JPA 테이블 자동 생성, 루트 INFO, 프로젝트 Package DEBUG
-  - `application-dev.yaml`: 포트 8080, MySQL, JPA 스키마 갱신, 선택적 `db/data.sql` 실행, 루트 INFO, 프로젝트 Package DEBUG
+  - `application-local.yaml`: 포트 8080, `jdbc:h2:mem:localdb`, H2 Console, JPA 테이블 자동 생성, `db/data.sql` 실행, 루트 INFO, 프로젝트 Package DEBUG
+  - `application-dev.yaml`: 포트 8080, MySQL, JPA 스키마 갱신, `db/data.sql` 경로 지정, 루트 INFO, 프로젝트 Package DEBUG (`spring.sql.init.mode` 미지정)
+  - `src/main/resources/db/data.sql`: 초기 데이터를 작성할 수 있는 빈 SQL 파일 생성
   - `.env.example`: `dev` 프로필과 MySQL 환경변수 예시를 생성하며 DB URL에는 입력한 데이터베이스명 반영
 - Spring Metadata 자동 입력
   - Group: `fullstack.teamproject`
@@ -173,10 +174,11 @@ README.md
    ├─ database-design.md
    ├─ screen-design.md
    ├─ api-design.md
-   └─ convention.md
+   ├─ convention.md
+   └─ class-diagram.md
 ```
 
-설계 문서는 제목과 작성 안내만 들어 있는 초기 상태로 만들어집니다. 프로젝트별 내용은 생성 후 팀의 설계 과정에서 채웁니다. Initializr가 생성한 `.gitignore`는 사용하지 않고 프로그램 폴더의 고정 `.gitignore` 템플릿으로 항상 덮어씁니다.
+대부분의 설계 문서는 제목과 작성 안내만 들어 있는 초기 상태로 만들어집니다. `docs/convention.md`는 프로그램의 `templates/convention.md`를 복사하여 기본 코드 컨벤션과 점검표를 제공합니다. 프로젝트별 내용은 생성 후 팀의 설계 과정에서 채웁니다. Initializr가 생성한 `.gitignore`는 사용하지 않고 프로그램 폴더의 고정 `.gitignore` 템플릿으로 항상 덮어씁니다.
 
 1단계가 끝나면 GitHub 저장소의 Wiki에서 임시 `Home` 페이지를 한 번 수동 생성해야 합니다. 이 과정이 없으면 Wiki Git 저장소가 만들어지지 않아 2단계를 진행할 수 없습니다.
 

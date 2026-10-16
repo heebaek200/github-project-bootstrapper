@@ -21,6 +21,7 @@ Add-Type -AssemblyName WindowsBase
 $script:AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:WikiTemplatePath = Join-Path $script:AppRoot 'wiki'
 $script:DailyReportTemplatePath = Join-Path $script:AppRoot 'templates\daily-report.md'
+$script:CodeConventionTemplatePath = Join-Path $script:AppRoot 'templates\convention.md'
 $script:GitIgnorePath = Join-Path $script:AppRoot '.gitignore'
 $script:LogsPath = Join-Path $script:AppRoot 'logs'
 $script:StatePath = Join-Path $script:AppRoot 'state.json'
@@ -349,7 +350,10 @@ function Invoke-Preflight {
     if (-not (Test-Path -LiteralPath $script:DailyReportTemplatePath -PathType Leaf)) {
         throw "일일 리포트 템플릿이 없습니다: $($script:DailyReportTemplatePath)"
     }
-    Write-AppLog ("고정 .gitignore, 일일 리포트 템플릿과 Wiki Markdown 템플릿 {0}개를 확인했습니다." -f $wikiFiles.Count) 'OK'
+    if (-not (Test-Path -LiteralPath $script:CodeConventionTemplatePath -PathType Leaf)) {
+        throw "코드 컨벤션 템플릿이 없습니다: $($script:CodeConventionTemplatePath)"
+    }
+    Write-AppLog ("고정 .gitignore, 일일 리포트·코드 컨벤션 템플릿과 Wiki Markdown 템플릿 {0}개를 확인했습니다." -f $wikiFiles.Count) 'OK'
 
     Set-AppStatus ("준비 완료 — {0}" -f $script:Owner) 100
     return $true
@@ -547,6 +551,12 @@ function Set-SpringProfileConfiguration {
         throw "Spring 설정 파일을 찾지 못했습니다: $applicationPath"
     }
 
+    $databaseResourcesPath = Join-Path $resourcesPath 'db'
+    if (-not (Test-Path -LiteralPath $databaseResourcesPath -PathType Container)) {
+        New-Item -ItemType Directory -Path $databaseResourcesPath | Out-Null
+    }
+    [System.IO.File]::WriteAllText((Join-Path $databaseResourcesPath 'data.sql'), '', $script:Utf8Encoding)
+
     $application = @"
 server:
   servlet:
@@ -560,9 +570,11 @@ spring:
     name: $Artifact
   profiles:
     active: `${SPRING_PROFILES_ACTIVE:local}
-  mustache:
-    servlet:
-      expose-session-attributes: true   # Mustache 파일에서 세션값 사용
+  jpa:
+    open-in-view: false # OSIV 비적용. 트랜잭션이 끝나면 영속성 컨텍스트 지연 로딩 불가.
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
 "@
     [System.IO.File]::WriteAllText($applicationPath, $application, $script:Utf8Encoding)
 
@@ -598,9 +610,14 @@ spring:
     properties:
       hibernate:
         format_sql: true    # 출력되는 SQL을 콘솔창에 줄바꿈해 보기 좋게 표시
-        default_batch_fetch_size: 10
     # data.sql을 테이블 생성 후에 실행한다.
     defer-datasource-initialization: true
+
+  sql:
+    init:
+      mode: always
+      data-locations:
+        - classpath:db/data.sql # 서버 시작 시 이 파일 실행
 "@
     [System.IO.File]::WriteAllText((Join-Path $resourcesPath 'application-local.yaml'), $local, $script:Utf8Encoding)
 
@@ -631,16 +648,13 @@ spring:
     properties:
       hibernate:
         format_sql: true    # 출력되는 SQL을 콘솔창에 줄바꿈해 보기 좋게 표시
-        default_batch_fetch_size: 10
     # data.sql을 테이블 생성 후에 실행한다.
     defer-datasource-initialization: true
 
-  # MySQL에서도 서버 시작 시 초기 데이터 파일을 실행한다.
   sql:
     init:
-      mode: always
       data-locations:
-        - optional:classpath:db/data.sql
+        - classpath:db/data.sql
 "@
     [System.IO.File]::WriteAllText((Join-Path $resourcesPath 'application-dev.yaml'), $development, $script:Utf8Encoding)
 
@@ -709,8 +723,14 @@ function New-ProjectDocumentation {
         'screen-design.md' = '화면 설계서'
         'api-design.md' = 'REST API 설계서'
         'convention.md' = '코드 컨벤션'
+        'class-diagram.md' = '클래스 다이어그램'
     }
     foreach ($document in $documents.GetEnumerator()) {
+        if ($document.Key -eq 'convention.md') {
+            Copy-Item -LiteralPath $script:CodeConventionTemplatePath -Destination (Join-Path $docsPath $document.Key) -Force
+            continue
+        }
+
         $content = "# $($document.Value)`r`n`r`n> 프로젝트 설계 과정에서 내용을 작성합니다.`r`n"
         [System.IO.File]::WriteAllText((Join-Path $docsPath $document.Key), $content, $script:Utf8Encoding)
     }
@@ -728,6 +748,7 @@ function New-ProjectDocumentation {
         '- [화면 설계서](screen-design.md)',
         '- [REST API 설계서](api-design.md)',
         '- [코드 컨벤션](convention.md)',
+        '- [클래스 다이어그램](class-diagram.md)',
         ''
     )
     [System.IO.File]::WriteAllLines((Join-Path $docsPath 'index.md'), $indexLines, $script:Utf8Encoding)
@@ -748,7 +769,7 @@ function New-ProjectDocumentation {
         ''
     )
     [System.IO.File]::WriteAllLines((Join-Path $Destination 'README.md'), $readmeLines, $script:Utf8Encoding)
-    Write-AppLog 'README, 일일 리포트 템플릿, 설계 문서 6개와 문서 목차를 준비했습니다.' 'OK'
+    Write-AppLog 'README, 일일 리포트 템플릿, 설계 문서 7개와 문서 목차를 준비했습니다.' 'OK'
 }
 
 function New-GitHubRepository {
