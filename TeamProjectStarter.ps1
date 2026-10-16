@@ -33,6 +33,7 @@ $script:OwnerId = $null
 $script:LogBox = $null
 $script:StatusText = $null
 $script:ProgressBar = $null
+$script:MembersPanel = $null
 $script:SpringBootVersion = '4.1.1'
 $script:JavaVersion = '21'
 $script:DefaultGroupId = 'fullstack.teamproject'
@@ -1249,13 +1250,6 @@ mutation($input: UpdateProjectV2CollaboratorsInput!) {
     Write-AppLog "Project WRITE 권한을 처리했습니다: $Login" 'OK'
 }
 
-function Parse-Members {
-    param([string]$Text)
-    if ([string]::IsNullOrWhiteSpace($Text)) { return @() }
-    $items = $Text -split '[,;\r\n\t ]+'
-    return @($items | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -Unique)
-}
-
 # 2단계 대상 저장소가 채용 담당자에게 공개될 수 있도록 Public 상태를 보장하고
 # Discussions 기능을 활성화한다. 이미 원하는 상태라면 변경 명령을 생략하므로
 # 같은 저장소에 2단계를 다시 실행해도 기능 설정이 중복되거나 누적되지 않는다.
@@ -1411,6 +1405,77 @@ function Get-InputText {
     return $TextBox.Text.Trim()
 }
 
+# 조원 한 명을 입력하는 행을 추가한다. 각 행은 단일 사용자명 입력칸과
+# 제거 버튼으로 구성하며, 사용자명을 입력한 뒤 Enter를 누르면 다음 행을 만든다.
+function Add-MemberInputRow {
+    param([switch]$Focus)
+
+    if ($null -eq $script:MembersPanel) {
+        throw '조원 입력 목록을 찾지 못했습니다.'
+    }
+
+    $row = New-Object System.Windows.Controls.DockPanel
+    $row.LastChildFill = $true
+    $row.Margin = '0,0,0,7'
+
+    $removeButton = New-Object System.Windows.Controls.Button
+    $removeButton.Content = '−'
+    $removeButton.Width = 34
+    $removeButton.Height = 34
+    $removeButton.Margin = '8,0,0,0'
+    $removeButton.ToolTip = '이 조원 입력칸 제거'
+    $removeButton.Tag = $row
+    [System.Windows.Controls.DockPanel]::SetDock($removeButton, [System.Windows.Controls.Dock]::Right)
+
+    $input = New-Object System.Windows.Controls.TextBox
+    $input.Height = 34
+    $input.FontSize = 14
+    $input.Padding = '9,5'
+    Set-Placeholder -TextBox $input -Placeholder '예: member-one'
+
+    $removeButton.Add_Click({
+        param($sender, $eventArgs)
+
+        [void]$script:MembersPanel.Children.Remove($sender.Tag)
+        if ($script:MembersPanel.Children.Count -eq 0) {
+            Add-MemberInputRow -Focus
+        }
+    })
+    $input.Add_KeyDown({
+        param($sender, $eventArgs)
+
+        if ($eventArgs.Key -ne [System.Windows.Input.Key]::Enter) { return }
+        $eventArgs.Handled = $true
+        if (-not [string]::IsNullOrWhiteSpace((Get-InputText $sender))) {
+            Add-MemberInputRow -Focus
+        }
+    })
+
+    [void]$row.Children.Add($removeButton)
+    [void]$row.Children.Add($input)
+    [void]$script:MembersPanel.Children.Add($row)
+
+    if ($Focus) {
+        [void]$input.Focus()
+    }
+}
+
+# 동적으로 생성된 조원 입력 행에서 사용자명을 수집한다. 빈 입력은 제외하고
+# 같은 사용자명이 여러 번 입력되면 최초 값만 반환한다.
+function Get-MemberLogins {
+    $members = @()
+    foreach ($row in $script:MembersPanel.Children) {
+        $input = @($row.Children | Where-Object { $_ -is [System.Windows.Controls.TextBox] }) | Select-Object -First 1
+        if ($null -eq $input) { continue }
+
+        $login = Get-InputText $input
+        if (-not [string]::IsNullOrWhiteSpace($login)) {
+            $members += $login
+        }
+    }
+    return @($members | Select-Object -Unique)
+}
+
 function Invoke-GuiAction {
     param([scriptblock]$Action)
     try {
@@ -1529,8 +1594,13 @@ Ensure-LocalFolders
           <TextBox Grid.Row="2" Name="TargetRepositoryBox" Height="36" FontSize="14" Padding="10,6" Margin="0,0,0,13"/>
           <TextBlock Grid.Row="3" Text="Projects 논리명" FontWeight="SemiBold" Margin="0,0,0,6"/>
           <TextBox Grid.Row="4" Name="ProjectTitleBox" Height="36" FontSize="14" Padding="10,6" Margin="0,0,0,13"/>
-          <TextBlock Grid.Row="5" Text="조원 GitHub 사용자명 · 선택사항" FontWeight="SemiBold" Margin="0,0,0,6"/>
-          <TextBox Grid.Row="6" Name="MembersBox" Height="70" FontSize="14" Padding="10,7" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,0,13"/>
+          <DockPanel Grid.Row="5" Margin="0,0,0,6">
+            <Button Name="AddMemberButton" Content="+ 조원 추가" Width="105" Height="30" DockPanel.Dock="Right"/>
+            <TextBlock Text="조원 GitHub 사용자명 · 선택사항" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </DockPanel>
+          <Border Grid.Row="6" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6" Padding="10,10,10,3" Margin="0,0,0,13">
+            <StackPanel Name="MembersPanel"/>
+          </Border>
           <StackPanel Grid.Row="7" Orientation="Horizontal" Margin="0,0,0,14">
             <Button Name="ConfigureButton" Content="팀 환경 구성" Width="145" Height="42" MinHeight="42" Background="#1F883D" Foreground="White" FontWeight="SemiBold" BorderThickness="0"/>
             <Button Name="OpenWikiButton" Content="Wiki 열기" Width="110" Height="42" MinHeight="42" Margin="10,0,0,0" FontWeight="SemiBold"/>
@@ -1576,7 +1646,8 @@ $databaseNamePanel = $window.FindName('DatabaseNamePanel')
 $databaseNameBox = $window.FindName('DatabaseNameBox')
 $targetRepositoryBox = $window.FindName('TargetRepositoryBox')
 $projectTitleBox = $window.FindName('ProjectTitleBox')
-$membersBox = $window.FindName('MembersBox')
+$addMemberButton = $window.FindName('AddMemberButton')
+$script:MembersPanel = $window.FindName('MembersPanel')
 $createRepositoryButton = $window.FindName('CreateRepositoryButton')
 $configureButton = $window.FindName('ConfigureButton')
 $openRepositoryButton = $window.FindName('OpenRepositoryButton')
@@ -1591,7 +1662,8 @@ Set-Placeholder -TextBox $repositoryNameBox -Placeholder '예: study-room-reserv
 Set-Placeholder -TextBox $descriptionBox -Placeholder '예: 스터디룸 예약 시스템'
 Set-Placeholder -TextBox $targetRepositoryBox -Placeholder '예: study-room-reservation'
 Set-Placeholder -TextBox $projectTitleBox -Placeholder '예: 스터디룸 예약 프로젝트'
-Set-Placeholder -TextBox $membersBox -Placeholder "선택사항 — 한 줄에 한 명`n예: member-one`nmember-two"
+Add-MemberInputRow
+$addMemberButton.Add_Click({ Add-MemberInputRow -Focus })
 
 $springGroupBox.Text = $script:DefaultGroupId
 $springArtifactBox.Text = 'application'
@@ -1699,7 +1771,7 @@ $configureButton.Add_Click({
     Invoke-GuiAction {
         $repository = Get-InputText $targetRepositoryBox
         $title = Get-InputText $projectTitleBox
-        $members = @(Parse-Members (Get-InputText $membersBox))
+        $members = @(Get-MemberLogins)
         $memberText = if ($members.Count -eq 0) { '없음 — 초대 건너뜀' } else { $members -join ', ' }
         $message = @"
 다음 팀 환경을 구성하시겠습니까?

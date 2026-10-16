@@ -211,7 +211,7 @@ README.md
   - `작업 목록` (`-status:Done`, 시작일 → 완료(예정)일 오름차순 정렬)
   - `프로젝트 일정` (Roadmap 보기 생성 및 이름 설정만 수행)
 
-조원 입력은 선택사항입니다. 비워두면 저장소 및 Project 초대를 건너뜁니다. 입력한 경우 저장소와 Project에 WRITE 권한을 설정합니다.
+조원 입력은 선택사항입니다. `+ 조원 추가`를 누르거나 사용자명을 입력한 뒤 Enter를 누르면 한 줄 입력칸이 추가됩니다. 각 입력칸에는 이메일이 아닌 GitHub 사용자명만 입력합니다. 비워두면 저장소 및 Project 초대를 건너뛰며, 입력한 경우 저장소와 Project에 WRITE 권한을 설정합니다.
 
 Project 연결은 자동으로 처리되지만 `Default repository`는 자동 지정하지 않습니다. `Project 설정` 버튼은 마지막으로 구성한 Project의 Settings 페이지를 열어 줍니다. 여기에서 `Default repository`를 대상 저장소 물리명으로 직접 선택합니다.
 
