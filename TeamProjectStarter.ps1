@@ -1762,6 +1762,8 @@ main 보호 Ruleset과 공개 GitHub Pages도 함께 생성됩니다.
             -DatabaseName $databaseNameBox.Text.Trim()
         $targetRepositoryBox.Text = $repository
         $targetRepositoryBox.Foreground = [System.Windows.Media.Brushes]::Black
+        $projectTitleBox.Text = $description
+        $projectTitleBox.Foreground = [System.Windows.Media.Brushes]::Black
         $accountText.Text = "GitHub 계정: $($script:Owner) · 최근 저장소: $repository"
         [System.Windows.MessageBox]::Show("저장소 생성이 완료되었습니다.`n$($repo.url)`n`n이제 GitHub에서 Wiki Home을 한 번 수동 생성한 뒤 2단계를 실행하세요.", '완료', [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information) | Out-Null
     }
