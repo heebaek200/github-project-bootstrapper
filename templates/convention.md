@@ -173,7 +173,7 @@ Controller에서 하지 않을 작업:
 - 트랜잭션 관리
 - Entity를 요청이나 응답으로 직접 사용
 
-**SSR과 REST API Controller는 분리합니다. (필수)**
+**SSR과 REST API Controller는 분리합니다.**
 
 - `BoardController`: HTML 화면 반환
 - `BoardApiController`: `/api/**` 경로에서 JSON 등의 데이터 반환
@@ -215,6 +215,8 @@ Entity에는 데이터뿐만 아니라 자신과 밀접한 상태 변경 로직�
 
 예를 들어 게시글 제목 변경은 다음과 같은 메서드로 표현할 수 있습니다.
 
+Entity는 Setter 메서드를 작성하지 않는 것을 원칙으로 합니다.
+
 ```java
 board.updateTitle(newTitle);
 ```
@@ -238,7 +240,7 @@ Entity를 직접 노출하면 내부 데이터 구조가 API와 강하게 결합
 
 ## 1.6. 예외 처리
 
-**예외는 각 Controller에서 개별적으로 처리하지 않고 중앙 예외 처리기에서 공통으로 처리합니다. (필수)**
+**예외는 각 Controller에서 개별적으로 처리하지 않고 중앙 예외 처리기에서 공통으로 처리합니다.**
 
 Spring의 `@RestControllerAdvice`, `@ControllerAdvice`를 활용합니다.
 
@@ -290,7 +292,7 @@ Spring의 `@RestControllerAdvice`, `@ControllerAdvice`를 활용합니다.
 
 ## 1.8. JPA와 데이터베이스 접근
 
-**JPA는 Spring Data JPA의 Repository 인터페이스를 기본으로 사용합니다. (권장)**
+**JPA는 Spring Data JPA의 Repository 인터페이스를 기본으로 사용합니다.**
 
 ### 기본 CRUD
 
@@ -349,7 +351,7 @@ Service의 트랜잭션 안에서 조회한 Entity의 상태를 변경하면 JPA
 
 ## 1.10. 공통 코드와 재사용
 
-**공통화는 중복된 코드의 양이 아니라, 동일한 책임을 공유하는지를 기준으로 판단합니다. (권장)**
+**공통화는 중복된 코드의 양이 아니라, 동일한 책임을 공유하는지를 기준으로 판단합니다.**
 
 여러 곳에서 비슷한 코드가 등장했다고 해서 무조건 하나의 메서드로 합칠 필요는 없습니다.
 

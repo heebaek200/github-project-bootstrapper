@@ -510,19 +510,22 @@ function Get-SpringInitializrUri {
     return "https://start.spring.io/starter.zip?$query"
 }
 
-function Add-CommonsLangDependency {
-    param([Parameter(Mandatory = $true)][string]$Destination)
+function Add-GradleImplementationDependency {
+    param(
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$Coordinate,
+        [Parameter(Mandatory = $true)][string]$DisplayName
+    )
 
     $buildPath = Join-Path $Destination 'build.gradle'
     if (-not (Test-Path -LiteralPath $buildPath -PathType Leaf)) {
         throw "Gradle 빌드 파일을 찾지 못했습니다: $buildPath"
     }
 
-    $coordinate = 'org.apache.commons:commons-lang3'
     # Initializr가 UTF-8로 생성한 한글 Description을 Windows PowerShell 5.1에서도
     # 손상 없이 유지하도록 기본 코드페이지 대신 UTF-8을 명시해 읽는다.
     $build = [System.IO.File]::ReadAllText($buildPath, $script:Utf8Encoding)
-    if ($build.Contains($coordinate)) {
+    if ($build.Contains($Coordinate)) {
         return
     }
 
@@ -532,10 +535,10 @@ function Add-CommonsLangDependency {
     }
 
     $newLine = if ($build.Contains("`r`n")) { "`r`n" } else { "`n" }
-    $dependency = "$newLine`timplementation 'org.apache.commons:commons-lang3'"
+    $dependency = "$newLine`timplementation '$Coordinate'"
     $build = $build.Insert($dependenciesBlock.Index + $dependenciesBlock.Length, $dependency)
     [System.IO.File]::WriteAllText($buildPath, $build, $script:Utf8Encoding)
-    Write-AppLog 'Apache Commons Lang 의존성을 build.gradle에 추가했습니다.' 'OK'
+    Write-AppLog "$DisplayName 의존성을 build.gradle에 추가했습니다." 'OK'
 }
 
 function Set-SpringProfileConfiguration {
@@ -571,6 +574,10 @@ spring:
     name: $Artifact
   profiles:
     active: `${SPRING_PROFILES_ACTIVE:local}
+  servlet:
+    multipart:
+      max-file-size: 10MB      # 파일 하나의 최대 크기
+      max-request-size: 11MB   # 요청 전체(파일 + 입력값)의 최대 크기
   jpa:
     open-in-view: false # OSIV 비적용. 트랜잭션이 끝나면 영속성 컨텍스트 지연 로딩 불가.
     properties:
@@ -686,14 +693,15 @@ function Initialize-SpringBootProject {
         Write-AppLog ("Spring Initializr에서 Spring Boot {0} / Java {1} 프로젝트를 내려받습니다." -f $script:SpringBootVersion, $script:JavaVersion)
         Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $archivePath
         Expand-Archive -LiteralPath $archivePath -DestinationPath $Destination -Force
-        Add-CommonsLangDependency -Destination $Destination
+        Add-GradleImplementationDependency -Destination $Destination -Coordinate 'org.apache.commons:commons-lang3' -DisplayName 'Apache Commons Lang'
+        Add-GradleImplementationDependency -Destination $Destination -Coordinate 'org.springframework.security:spring-security-crypto' -DisplayName 'Spring Security Crypto'
         Set-SpringProfileConfiguration -Destination $Destination -Artifact $Artifact -Package $Package -DatabaseName $DatabaseName
 
         $helpPath = Join-Path $Destination 'HELP.md'
         if (Test-Path -LiteralPath $helpPath -PathType Leaf) {
             Remove-Item -LiteralPath $helpPath -Force
         }
-        Write-AppLog 'Spring Web, Mustache, Lombok, DevTools, Data JPA, MySQL Driver, H2, Apache Commons Lang 기반 프로젝트를 준비했습니다.' 'OK'
+        Write-AppLog 'Spring Web, Mustache, Lombok, DevTools, Data JPA, MySQL Driver, H2, Apache Commons Lang, Spring Security Crypto 기반 프로젝트를 준비했습니다.' 'OK'
     }
     finally {
         if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
